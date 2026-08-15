@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 import time
 
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
 from ..core import preview
 from ..core.encoder import probe, process
 from ..core.hwaccel import describe_available
+from ..core.subproc import popen as popen_hidden  # 隐藏窗口启动 explorer（避免闪命令窗）
 from ..core.watermark import list_available_fonts
 from ..models import (
     KIND_IMAGE, KIND_TEXT, MODE_MOTION, MODE_TILED,
@@ -538,10 +538,10 @@ class MainWindow(QMainWindow):
         folder = os.path.dirname(os.path.abspath(path))
         if os.path.isfile(path):
             # 文件存在 -> 资源管理器中选中该文件
-            subprocess.Popen(f'explorer /select,"{os.path.abspath(path)}"')
+            popen_hidden(f'explorer /select,"{os.path.abspath(path)}"')
         elif os.path.isdir(folder):
             # 文件不存在（如尚未生成的输出）-> 打开其所在目录
-            subprocess.Popen(f'explorer "{folder}"')
+            popen_hidden(f'explorer "{folder}"')
         else:
             QMessageBox.warning(self, "提示", f"路径不存在：{path}")
 

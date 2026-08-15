@@ -37,6 +37,7 @@ Windows 桌面**视频水印**软件（PySide6 GUI + 命令行双入口）。核
 - `macro_block_size=1` **必须保留**：默认 16 对齐会导致输出被内部二次缩放（如 640x360 → 368）拉伸变形。
 - 输出尺寸只对齐到偶数（yuv420p 要求），不要强行 16 对齐。
 - **音频保留**：`process()` 编码出的临时视频无音轨，之后用内置 ffmpeg `-map 0:v:0 -map 1:a:0 -c:a copy -shortest` 从原视频无损合并；容器不兼容时回退 `-c:a aac -b:a 192k`。输入无音频则直接改名收尾。修改此流程后务必跑 `scripts/verify_audio.py`。
+- **子进程启动一律隐藏窗口**：GUI 无控制台（pythonw/打包 exe）下，直接 `subprocess.run/Popen` 拉 ffmpeg/explorer 会**一闪而过命令窗**。任何新的 ffmpeg/外部命令调用必须走 `app/core/subproc.py` 的 `run()/popen()`（Windows 自动附加 `CREATE_NO_WINDOW`），不得再裸用 `subprocess.run/Popen`。imageio-ffmpeg 内部已自带窗口隐藏，勿经此封装。修改后跑 `verify_hw.py`/`verify_audio.py` 确认子进程路径正常。
 
 ## GPU 硬件加速（改这里必读）
 

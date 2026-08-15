@@ -20,6 +20,7 @@ import imageio_ffmpeg
 from ..models import WatermarkConfig
 from .compositor import WatermarkCompositor
 from .hwaccel import build_decode_input_params, resolve_encode
+from .subproc import run as run_hidden  # 隐藏窗口启动 ffmpeg（避免 GUI 闪命令窗）
 
 ProgressCB = Optional[Callable[[int, int], None]]  # (done, total)
 
@@ -36,8 +37,8 @@ def get_ffmpeg_exe() -> str:
 def probe(path: str) -> dict:
     """返回 {width, height, fps, frames, duration_sec}。"""
     exe = get_ffmpeg_exe()
-    r = subprocess.run([exe, "-i", path], capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+    r = run_hidden([exe, "-i", path], capture_output=True, text=True,
+                   encoding="utf-8", errors="replace")
     stderr = r.stderr
 
     size_m = re.search(r"(\d{2,5})x(\d{2,5})", stderr)
@@ -299,8 +300,8 @@ def _merge_audio(input_path: str, video_tmp: str, output_path: str,
     - 输入无音频：直接改名输出（纯视频）。
     """
     exe = get_ffmpeg_exe()
-    r = subprocess.run([exe, "-i", input_path], capture_output=True,
-                       text=True, encoding="utf-8", errors="replace")
+    r = run_hidden([exe, "-i", input_path], capture_output=True,
+                   text=True, encoding="utf-8", errors="replace")
     if "Audio:" not in r.stderr:
         # 原视频没有音频流 -> 直接以视频文件收尾
         os.replace(video_tmp, output_path)
@@ -318,8 +319,8 @@ def _merge_audio(input_path: str, video_tmp: str, output_path: str,
         "-shortest",
         output_path,
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True,
-                         encoding="utf-8", errors="replace")
+    res = run_hidden(cmd, capture_output=True, text=True,
+                     encoding="utf-8", errors="replace")
     if res.returncode == 0:
         return
 
@@ -336,8 +337,8 @@ def _merge_audio(input_path: str, video_tmp: str, output_path: str,
         "-shortest",
         output_path,
     ]
-    res2 = subprocess.run(fallback, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
+    res2 = run_hidden(fallback, capture_output=True, text=True,
+                      encoding="utf-8", errors="replace")
     if res2.returncode != 0:
         raise RuntimeError(
             f"音频合并失败：{res2.stderr[-500:]}")
@@ -365,7 +366,7 @@ def generate_sample_video(path: str, size: tuple = (640, 360),
     if with_audio:
         cmd += ["-c:a", "aac", "-b:a", "128k", "-shortest"]
     cmd.append(path)
-    subprocess.run(cmd, check=True, capture_output=True)
+    run_hidden(cmd, check=True, capture_output=True)
 
 
 def generate_sample_logo(path: str, text: str = "LOGO", size: int = 220) -> None:

@@ -26,6 +26,8 @@ from typing import Optional
 
 import imageio_ffmpeg
 
+from .subproc import run as run_hidden  # 隐藏窗口启动 ffmpeg（避免 GUI 闪命令窗）
+
 # ---------------------------------------------------------------------------
 # 硬件编码器注册表
 # ---------------------------------------------------------------------------
@@ -70,9 +72,9 @@ HW_CODECS = ("h264", "hevc")
 def _ffmpeg_encoder_names() -> set[str]:
     """从内置 ffmpeg 的 -encoders 输出中解析存在的编码器名集合。"""
     exe = imageio_ffmpeg.get_ffmpeg_exe()
-    r = subprocess.run([exe, "-hide_banner", "-encoders"],
-                       capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+    r = run_hidden([exe, "-hide_banner", "-encoders"],
+                   capture_output=True, text=True,
+                   encoding="utf-8", errors="replace")
     names: set[str] = set()
     for line in r.stdout.splitlines():
         m = re.match(r"\s*\S+\s+(\S+)", line)  # 第二列为编码器名
@@ -94,8 +96,8 @@ def _test_encoder(codec_name: str) -> bool:
                 "-b:v", "400k", "-pix_fmt", "yuv420p",
                 out,
             ]
-            r = subprocess.run(cmd, capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", timeout=30)
+            r = run_hidden(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=30)
             return (r.returncode == 0 and os.path.isfile(out)
                     and os.path.getsize(out) > 0)
     except Exception:  # noqa: BLE001
