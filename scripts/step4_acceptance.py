@@ -29,7 +29,7 @@ process(str(SRC), str(OUT / "accept_tiled45.mp4"), WatermarkConfig(
     text="内部资料\n严禁外传",
     font_size=44, text_opacity=80, stroke_width=1,
     angle=45.0, tile_dx=340, tile_dy=220,
-), crf=23, preset="medium")
+), crf=23, preset="medium", hw_encoder="none", hw_decode=False)
 
 print("生成验收样例 2：移动·正弦波·时间范围 1.0~3.5s")
 process(str(SRC), str(OUT / "accept_motion_range.mp4"), WatermarkConfig(
@@ -39,6 +39,6 @@ process(str(SRC), str(OUT / "accept_motion_range.mp4"), WatermarkConfig(
     trajectory=TRAJECTORY_SINE, speed=1.0,
     motion_scale=0.22, motion_opacity=220,
     start_sec=1.0, end_sec=3.5,
-), crf=23, preset="medium")
+), crf=23, preset="medium", hw_encoder="none", hw_decode=False)
 
 print("完成。")

@@ -15,8 +15,9 @@ Windows 桌面**视频水印**软件（PySide6 GUI + 命令行双入口）。核
 ## 入口
 
 - GUI：项目根目录 `python -m app.main`（或双击 `启动.bat`，会自动建 venv+装依赖）。
-- 命令行：`python -m app.cli --input in.mp4 --output out.mp4 [--mode tiled|motion] [--kind text|image] [--text|--image] [--angle] [--trajectory] [--set k=v] [--crf --preset --scale]`。
+- 命令行：`python -m app.cli --input in.mp4 --output out.mp4 [--mode tiled|motion] [--kind text|image] [--text|--image] [--angle] [--trajectory] [--set k=v] [--crf --preset --scale] [--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf] [--hw-codec h264|hevc] [--no-hw-decode]`。
   - `--set k=v` 覆盖 `WatermarkConfig` 任意字段（可重复）；`--print-config` 打印完整配置 JSON。
+  - `--hw-encoder` 默认 `auto`（自动选可用硬件编码器，无 GPU 回退 libx264）；`--hw-codec` 仅硬件编码时生效；`--no-hw-decode` 禁用硬件解码（默认开 `-hwaccel auto`，失败自动回退软解）。
 - 打包自检：`dist\VideoWatermark.exe --selftest`（离屏建窗+编码验证，退出码 0 = 正常）。
 
 ## 核心架构（数据流）
@@ -25,7 +26,7 @@ Windows 桌面**视频水印**软件（PySide6 GUI + 命令行双入口）。核
 - `app/core/watermark.py` — 渲染文字/图片单元格、旋转、平铺瓦片、字体枚举。
 - `app/core/motion.py` — 6 种轨迹（horizontal/vertical/diagonal/circle/figure8/sine），`position_at()` 返回帧时刻水印左上角坐标。
 - `app/core/compositor.py` — `WatermarkCompositor` 逐帧 `apply(frame_rgb, t)`，含时间范围门控、自转。
-- `app/core/encoder.py` — `probe()` 解析分辨率/帧率/时长/是否有音频；`process()` 读帧→合成→编码输出→**合并音频**。
+- `app/core/encoder.py` — `probe()` 解析分辨率/帧率/时长/是否有音频；`process()` 读帧→合成→编码输出→**合并音频**。`process()` 支持**并行帧流水线**（`parallel` 参数：0=自动按 CPU 核数 2~4、1=串行、N=指定）：`_run_serial` 串行、`_run_pipelined` 多线程（主线程读帧 → N 个 worker 线程并行合成 → 独立写线程按帧序号保序喂给 ffmpeg，有界队列背压）。串行与并行输出**字节级一致**（合成逻辑相同、仅交付方式不同）。
 - `app/core/preview.py` — 单帧预览渲染、轨迹示意图。
 - `app/ui/` — `main_window.py`（主窗口+RenderWorker QThread）、`batch_dialog.py`（批量处理）。
 
@@ -37,18 +38,29 @@ Windows 桌面**视频水印**软件（PySide6 GUI + 命令行双入口）。核
 - 输出尺寸只对齐到偶数（yuv420p 要求），不要强行 16 对齐。
 - **音频保留**：`process()` 编码出的临时视频无音轨，之后用内置 ffmpeg `-map 0:v:0 -map 1:a:0 -c:a copy -shortest` 从原视频无损合并；容器不兼容时回退 `-c:a aac -b:a 192k`。输入无音频则直接改名收尾。修改此流程后务必跑 `scripts/verify_audio.py`。
 
-## 验证与测试（7 套，全过再交付）
+## GPU 硬件加速（改这里必读）
+
+- `app/core/hwaccel.py` 统一负责硬件编码：`detect_encoders()`（对每个候选做极短样片实测编码，结果 `lru_cache`）、`resolve_encode()`（统一 CRF/预设 → 各家参数，回退 libx264）、`build_decode_input_params()`。
+- 内置 ffmpeg v7.1 自带 `h264/hevc/av1_nvenc`、`h264/hevc_qsv`、`h264/hevc_amf`、`hevc_d3d12va`、`h264/hevc_mf`，**零新增依赖/二进制**；打包不受影响。
+- `process(...)` 新增参数：`hw_encoder="auto"`（auto/none/nvenc/qsv/amf/d3d12va/mf）、`hw_codec="h264"`、`hw_decode=True`（`-hwaccel auto`，头部解析失败自动回退软解）。返回 dict 新增 `codec` 键。
+- `write_frames(...)` 必须传 `quality=None`：否则非 libx264 编码器会被追加 `-qscale:v`（旧代码隐式叠加 `-crf 25` 只是被后置参数覆盖）。
+- 显式指定不可用编码器会 `raise RuntimeError`（不静默回退）；`auto` 才静默回退 libx264。
+- 本机（RTX 4050 + Intel UHD）实测：`nvenc(h264/hevc/av1)`、`qsv(h264/hevc)`、`mf(h264)` 可用；QSV 会提示 `yuv420p→nv12` 自动选择，属无害信息。
+- **确定性像素测试（`step1_demo.py`/`step4_acceptance.py`/`verify_audio.py`）固定 `hw_encoder="none", hw_decode=False`**，否则压缩噪声变化会让阈值判定不稳；GPU 路径由 `scripts/verify_hw.py` 专项覆盖。
+
+## 验证与测试（9 套，全过再交付）
 
 统一运行方式（PowerShell）：
 `$env:PYTHONIOENCODING='utf-8'; .\.venv\Scripts\python.exe scripts\<name>.py`
 
-- `smoke_test.py` 轨迹坐标/文字图片渲染逻辑；`verify_step1.py` 像素级成品验证（水印差异 + 轨迹质心 vs `position_at`）；`gui_smoke.py` GUI 离屏冒烟；`gui_export_test.py`/`step3_export_test.py`/`step4_batch_test.py` 端到端导出/编码参数/批量；`verify_time_range.py` 时间范围；`verify_audio.py` 音频保留；`step1_demo.py` 生成样例输出到 `outputs/`。
+- `smoke_test.py` 轨迹坐标/文字图片渲染逻辑；`verify_step1.py` 像素级成品验证（水印差异 + 轨迹质心 vs `position_at`）；`gui_smoke.py` GUI 离屏冒烟；`gui_export_test.py`/`step3_export_test.py`/`step4_batch_test.py` 端到端导出/编码参数/批量；`verify_time_range.py` 时间范围；`verify_audio.py` 音频保留；`verify_hw.py` 硬件加速专项（探测 + 各硬件编码器实跑 + 回退 + 硬解 + 音频）；`verify_pipeline.py` 并行流水线专项（串行/并行字节级一致 + GPU/移动/硬解组合）；`step1_demo.py` 生成样例输出到 `outputs/`。
 
 测试怪癖：
 - GUI 测试须设 `QT_QPA_PLATFORM=offscreen`，且 `win.show()` 后才能 `isVisible()` 为真。
 - 像素验证比较用 `read_frames` 按**精确帧索引**读取（勿用 `-ss` 抽帧，会错位）；阈值：水印信号用 40，时间范围"无水印"判定用 120（重编码噪声 ~2000px 会干扰）。
 - 文字水印白底看不见——验收/演示须设 `stroke_width>=2` 描边。
 - PowerShell 下 Qt 字体警告写 stderr 会被当 exit code 1，**属误报**，看脚本内打印的 "全部通过" 判定。
+- **批量并行用 `ProcessPoolExecutor`（Windows spawn）**：任何会被进程池子进程导入的脚本/入口必须带 `if __name__ == "__main__":` 保护，否则子进程会重执行顶层代码递归（`step4_batch_test.py` 已按此改造）。
 
 ## 打包与发布
 

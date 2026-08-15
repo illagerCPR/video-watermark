@@ -30,7 +30,9 @@ from app.core.encoder import (  # noqa: E402
 
 def run(name, cfg, **kw):
     print(f"  ▶ {name}")
-    stats = process(SAMPLE_VIDEO, OUT_DIR / f"{name}.mp4", cfg, **kw)
+    # 像素级验证脚本依赖 libx264 的确定性压缩噪声，固定 CPU 编码路径
+    stats = process(SAMPLE_VIDEO, OUT_DIR / f"{name}.mp4", cfg,
+                    hw_encoder="none", hw_decode=False, **kw)
     print(f"    ✓ {name}.mp4  {stats['width']}x{stats['height']}  {stats['frames']} 帧")
 
 

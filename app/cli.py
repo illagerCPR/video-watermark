@@ -83,6 +83,17 @@ def main(argv=None) -> int:
     p.add_argument("--crf", type=int, default=23)
     p.add_argument("--preset", default="medium")
     p.add_argument("--scale", type=float, default=1.0)
+    p.add_argument("--hw-encoder", default="auto",
+                   choices=["auto", "none", "nvenc", "qsv", "amf", "d3d12va", "mf"],
+                   help="硬件编码：auto 自动选择（无 GPU 自动回退 libx264）"
+                        "/ none 纯 CPU / nvenc NVIDIA / qsv Intel / amf AMD")
+    p.add_argument("--hw-codec", default="h264", choices=["h264", "hevc"],
+                   help="硬件编码的视频编码（仅硬件编码时生效；默认 h264）")
+    p.add_argument("--no-hw-decode", action="store_true",
+                   help="禁用硬件解码（默认启用 -hwaccel auto，失败自动回退）")
+    p.add_argument("--parallel", type=int, default=0, metavar="N",
+                   help="帧流水线并行 worker 数：0=自动（默认，按 CPU 核数）、"
+                        "1=串行、N=指定（如 4）")
     p.add_argument("--print-config", action="store_true", help="打印最终配置后退出")
     args = p.parse_args(argv)
 
@@ -103,9 +114,12 @@ def main(argv=None) -> int:
     print("开始处理...")
     stats = process(args.input, args.output, cfg,
                     progress_cb=progress, crf=args.crf,
-                    preset=args.preset, scale=args.scale)
+                    preset=args.preset, scale=args.scale,
+                    hw_encoder=args.hw_encoder, hw_codec=args.hw_codec,
+                    hw_decode=not args.no_hw_decode,
+                    parallel=args.parallel)
     print(f"\n完成: {args.output}  {stats['width']}x{stats['height']}  "
-          f"{stats['frames']} 帧")
+          f"{stats['frames']} 帧  (编码器: {stats.get('codec', 'libx264')})")
     return 0
 
 

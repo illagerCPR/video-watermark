@@ -2,10 +2,12 @@
 
 - 添加文件 / 添加文件夹（自动过滤视频格式）
 - 输出到指定目录，命名：原名_水印.扩展名
-- 后台线程顺序处理，逐文件进度 + 结果日志
+- 支持并行：多进程同时处理 N 个视频（默认按 CPU 核数），逐文件进度 + 结果日志
 """
 from __future__ import annotations
 
+import concurrent.futures as cf
+import multiprocessing
 import os
 import sys
 from pathlib import Path
@@ -13,7 +15,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout,
+    QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox,
+    QVBoxLayout,
 )
 
 from ..core.encoder import process
@@ -22,47 +25,90 @@ from ..models import WatermarkConfig
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv", ".m4v", ".ts"}
 
 
+def _run_one(inp, out, cfg, crf, preset, scale, hw_encoder, hw_codec, hw_decode):
+    """供进程池调用的顶层函数（必须可 pickle，Windows spawn 要求）。"""
+    process(inp, out, cfg, crf=crf, preset=preset, scale=scale,
+            hw_encoder=hw_encoder, hw_codec=hw_codec, hw_decode=hw_decode)
+
+
 class BatchWorker(QThread):
-    file_progress = Signal(int, int)        # 当前文件 (done, total)
+    overall = Signal(int, int)              # (已完成文件数, 总文件数)
     file_finished = Signal(int, str, bool)  # (序号, 消息, 是否成功)
     all_done = Signal(int, int)             # (成功数, 失败数)
 
     def __init__(self, jobs: list[tuple[str, str]], cfg: WatermarkConfig,
-                 crf: int, preset: str, scale: float, parent=None):
+                 crf: int, preset: str, scale: float,
+                 hw_encoder: str = "auto", hw_codec: str = "h264",
+                 hw_decode: bool = True, parallel: int = 0, parent=None):
         super().__init__(parent)
         self.jobs = jobs
         self.cfg = cfg
         self.crf = crf
         self.preset = preset
         self.scale = scale
+        self.hw_encoder = hw_encoder
+        self.hw_codec = hw_codec
+        self.hw_decode = hw_decode
+        self.parallel = parallel if parallel > 0 else min(4, os.cpu_count() or 1)
 
     def run(self):
         ok = fail = 0
-        for idx, (inp, out) in enumerate(self.jobs):
-            try:
-                process(inp, out, self.cfg, progress_cb=self._on_progress,
-                        crf=self.crf, preset=self.preset, scale=self.scale)
-                ok += 1
-                self.file_finished.emit(idx, f"完成：{os.path.basename(out)}", True)
-            except Exception as exc:  # noqa: BLE001
-                fail += 1
-                self.file_finished.emit(
-                    idx, f"失败：{os.path.basename(inp)} —— {exc}", False)
-        self.all_done.emit(ok, fail)
+        total = len(self.jobs)
+        if self.parallel <= 1 or total <= 1:
+            # 串行（单文件/并行数=1）
+            for idx, (inp, out) in enumerate(self.jobs):
+                try:
+                    process(inp, out, self.cfg, crf=self.crf, preset=self.preset,
+                            scale=self.scale, hw_encoder=self.hw_encoder,
+                            hw_codec=self.hw_codec, hw_decode=self.hw_decode)
+                    ok += 1
+                    self.file_finished.emit(idx, f"完成：{os.path.basename(out)}", True)
+                except Exception as exc:  # noqa: BLE001
+                    fail += 1
+                    self.file_finished.emit(
+                        idx, f"失败：{os.path.basename(inp)} —— {exc}", False)
+                self.overall.emit(idx + 1, total)
+            self.all_done.emit(ok, fail)
+            return
 
-    def _on_progress(self, done, total):
-        self.file_progress.emit(done, total)
+        # 并行：多进程同时处理（进程池会真实并行解码/合成/编码）
+        with cf.ProcessPoolExecutor(max_workers=self.parallel) as pool:
+            fut_map = {}
+            for idx, (inp, out) in enumerate(self.jobs):
+                f = pool.submit(_run_one, inp, out, self.cfg, self.crf,
+                                self.preset, self.scale, self.hw_encoder,
+                                self.hw_codec, self.hw_decode)
+                fut_map[f] = idx
+            done_count = 0
+            for f in cf.as_completed(fut_map):
+                idx = fut_map[f]
+                try:
+                    f.result()
+                    ok += 1
+                    self.file_finished.emit(idx, f"完成：{os.path.basename(self.jobs[idx][1])}", True)
+                except Exception as exc:  # noqa: BLE001
+                    fail += 1
+                    self.file_finished.emit(
+                        idx, f"失败：{os.path.basename(self.jobs[idx][0])} —— {exc}", False)
+                done_count += 1
+                self.overall.emit(done_count, total)
+        self.all_done.emit(ok, fail)
 
 
 class BatchDialog(QDialog):
     def __init__(self, parent, cfg: WatermarkConfig,
-                 crf: int, preset: str, scale: float, out_ext: str):
+                 crf: int, preset: str, scale: float, out_ext: str,
+                 hw_encoder: str = "auto", hw_codec: str = "h264",
+                 hw_decode: bool = True):
         super().__init__(parent)
         self.cfg = cfg
         self.crf = crf
         self.preset = preset
         self.scale = scale
         self.out_ext = out_ext.lstrip(".")
+        self.hw_encoder = hw_encoder
+        self.hw_codec = hw_codec
+        self.hw_decode = hw_decode
         self._worker: BatchWorker | None = None
 
         self.setWindowTitle("批量处理")
@@ -102,6 +148,18 @@ class BatchDialog(QDialog):
         out_btn.clicked.connect(self._pick_outdir)
         out_row.addWidget(out_btn)
         lay.addLayout(out_row)
+
+        # 并行数
+        par_row = QHBoxLayout()
+        par_row.addWidget(QLabel("并行处理数:"))
+        self.parallel_spin = QSpinBox()
+        self.parallel_spin.setRange(1, min(8, os.cpu_count() or 1))
+        self.parallel_spin.setValue(min(4, os.cpu_count() or 1))
+        self.parallel_spin.setToolTip("同时处理的视频个数；越多占用 CPU/GPU 越高，批量吞吐越大")
+        par_row.addWidget(self.parallel_spin)
+        par_row.addWidget(QLabel("（多个视频同时处理，批量更快）"))
+        par_row.addStretch(1)
+        lay.addLayout(par_row)
 
         # 进度
         self.file_progress = QProgressBar()
@@ -200,16 +258,18 @@ class BatchDialog(QDialog):
         self.file_progress.setValue(0)
         self.status_label.setText(f"开始处理 {len(jobs)} 个文件...")
 
-        self._worker = BatchWorker(jobs, self.cfg, self.crf, self.preset, self.scale)
-        self._worker.file_progress.connect(self._on_file_progress)
+        self._worker = BatchWorker(jobs, self.cfg, self.crf, self.preset, self.scale,
+                                   self.hw_encoder, self.hw_codec, self.hw_decode,
+                                   self.parallel_spin.value())
+        self._worker.overall.connect(self._on_overall)
         self._worker.file_finished.connect(self._on_file_finished)
         self._worker.all_done.connect(self._on_all_done)
         self._worker.start()
 
-    def _on_file_progress(self, done, total):
-        pct = done * 100 // total if total else 0
-        self.file_progress.setValue(pct)
-        self.status_label.setText(f"当前进度：{pct}% ({done}/{total} 帧)")
+    def _on_overall(self, done, total):
+        if total:
+            self.file_progress.setValue(done * 100 // total)
+        self.status_label.setText(f"已完成 {done}/{total} 个文件")
 
     def _on_file_finished(self, idx, msg, ok):
         self.log.appendPlainText(msg)

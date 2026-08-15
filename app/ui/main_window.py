@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..core import preview
 from ..core.encoder import probe, process
+from ..core.hwaccel import describe_available
 from ..core.watermark import list_available_fonts
 from ..models import (
     KIND_IMAGE, KIND_TEXT, MODE_MOTION, MODE_TILED,
@@ -50,7 +51,8 @@ class RenderWorker(QThread):
 
     def __init__(self, input_path: str, output_path: str, cfg: WatermarkConfig,
                  crf: int = 23, preset: str = "medium", scale: float = 1.0,
-                 parent=None):
+                 hw_encoder: str = "auto", hw_codec: str = "h264",
+                 hw_decode: bool = True, parent=None):
         super().__init__(parent)
         self.input_path = input_path
         self.output_path = output_path
@@ -58,12 +60,17 @@ class RenderWorker(QThread):
         self.crf = crf
         self.preset = preset
         self.scale = scale
+        self.hw_encoder = hw_encoder
+        self.hw_codec = hw_codec
+        self.hw_decode = hw_decode
 
     def run(self):
         try:
             stats = process(self.input_path, self.output_path, self.cfg,
                             progress_cb=self._on_progress,
-                            crf=self.crf, preset=self.preset, scale=self.scale)
+                            crf=self.crf, preset=self.preset, scale=self.scale,
+                            hw_encoder=self.hw_encoder, hw_codec=self.hw_codec,
+                            hw_decode=self.hw_decode)
             self.done.emit(stats)
         except Exception as exc:  # noqa: BLE001
             self.error.emit(str(exc))
@@ -279,6 +286,44 @@ class MainWindow(QMainWindow):
         scale_hint = QLabel("1.0 = 原分辨率；0.5 = 缩小一半；2.0 = 放大一倍")
         scale_hint.setStyleSheet("color:#888; font-size:11px;")
         ol.addRow(scale_hint)
+
+        # 硬件加速（GPU 编码/解码）
+        self.hw_encoder_combo = QComboBox()
+        for label, val in (
+            ("自动（推荐）", "auto"),
+            ("关闭（纯 CPU）", "none"),
+            ("NVIDIA NVENC", "nvenc"),
+            ("Intel QSV", "qsv"),
+            ("AMD AMF", "amf"),
+            ("Microsoft D3D12VA", "d3d12va"),
+            ("MediaFoundation", "mf"),
+        ):
+            self.hw_encoder_combo.addItem(label, val)
+        self.hw_encoder_combo.currentIndexChanged.connect(self._on_hw_changed)
+        ol.addRow("硬件编码", self.hw_encoder_combo)
+
+        self.hw_codec_combo = QComboBox()
+        self.hw_codec_combo.addItem("H.264", "h264")
+        self.hw_codec_combo.addItem("HEVC (H.265)", "hevc")
+        ol.addRow("视频编码", self.hw_codec_combo)
+
+        self.hw_decode_check = QCheckBox("启用硬件解码（失败自动回退）")
+        self.hw_decode_check.setChecked(True)
+        ol.addRow(self.hw_decode_check)
+
+        hw_info_row = QHBoxLayout()
+        self.hw_info_label = QLabel("可用硬件编码器将在生成或点击检测时自动识别")
+        self.hw_info_label.setStyleSheet("color:#888; font-size:11px;")
+        self.hw_info_label.setWordWrap(True)
+        detect_btn = QPushButton("检测")
+        detect_btn.setToolTip("探测当前机器的可用硬件编码器")
+        detect_btn.clicked.connect(self._detect_hw)
+        hw_info_row.addWidget(self.hw_info_label, 1)
+        hw_info_row.addWidget(detect_btn)
+        ol.addRow(hw_info_row)
+        hw_hint = QLabel("硬件编码可大幅加速导出（NVENC/QSV/AMF）；无 GPU 时自动回退 CPU 编码")
+        hw_hint.setStyleSheet("color:#888; font-size:11px;")
+        ol.addRow(hw_hint)
         lay.addWidget(out_box)
 
         lay.addStretch(1)
@@ -508,6 +553,17 @@ class MainWindow(QMainWindow):
         if cur.lower() in known:
             self.output_edit.setText(stem + "." + ext)
 
+    def _on_hw_changed(self):
+        """硬件编码关闭时，视频编码（h264/hevc）选择不可用（libx264 固定 H.264）。"""
+        self.hw_codec_combo.setEnabled(self.hw_encoder_combo.currentData() != "none")
+
+    def _detect_hw(self):
+        """探测当前机器可用的硬件编码器并显示结果。"""
+        try:
+            self.hw_info_label.setText(describe_available())
+        except Exception as exc:  # noqa: BLE001
+            self.hw_info_label.setText(f"检测失败：{exc}")
+
     def _on_preview(self):
         input_path = self.input_edit.text()
         if not os.path.isfile(input_path):
@@ -578,6 +634,9 @@ class MainWindow(QMainWindow):
             crf=self.crf_slider.value(),
             preset=self.preset_combo.currentData() or "medium",
             scale=self.scale_spin.value(),
+            hw_encoder=self.hw_encoder_combo.currentData() or "auto",
+            hw_codec=self.hw_codec_combo.currentData() or "h264",
+            hw_decode=self.hw_decode_check.isChecked(),
         )
         self._worker.progress.connect(self._on_progress)
         self._worker.done.connect(self._on_done)
@@ -591,9 +650,12 @@ class MainWindow(QMainWindow):
     def _on_done(self, stats):
         self.progress_bar.setValue(100)
         self._export_btn.setEnabled(True)
+        codec = stats.get("codec", "libx264")
+        hw_note = "（硬件编码）" if codec and codec != "libx264" else "（CPU 编码）"
         QMessageBox.information(
             self, "完成",
             f"生成完成：{stats['width']}×{stats['height']}，共 {stats['frames']} 帧\n"
+            f"编码器：{codec} {hw_note}\n"
             f"输出：{self.output_edit.text()}")
 
     def _on_error(self, msg):
@@ -610,6 +672,9 @@ class MainWindow(QMainWindow):
             preset=self.preset_combo.currentData() or "medium",
             scale=self.scale_spin.value(),
             out_ext=ext,
+            hw_encoder=self.hw_encoder_combo.currentData() or "auto",
+            hw_codec=self.hw_codec_combo.currentData() or "h264",
+            hw_decode=self.hw_decode_check.isChecked(),
         )
         dlg.exec()
 

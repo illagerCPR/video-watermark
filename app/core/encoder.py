@@ -19,6 +19,7 @@ import imageio_ffmpeg
 
 from ..models import WatermarkConfig
 from .compositor import WatermarkCompositor
+from .hwaccel import build_decode_input_params, resolve_encode
 
 ProgressCB = Optional[Callable[[int, int], None]]  # (done, total)
 
@@ -73,12 +74,26 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
             progress_cb: ProgressCB = None,
             crf: int = 23, preset: str = "medium",
             scale: float = 1.0, out_fps: Optional[float] = None,
-            pix_fmt_out: str = "yuv420p") -> dict:
+            pix_fmt_out: str = "yuv420p",
+            hw_encoder: str = "auto", hw_codec: str = "h264",
+            hw_decode: bool = True,
+            parallel: int = 0) -> dict:
     """读输入视频 -> 逐帧叠加水印 -> 编码输出，并保留原音频。
 
     视频帧通过 imageio-ffmpeg 逐帧处理；音频流用内置 ffmpeg 从原视频
     无损复制（copy）合并回输出，保证转换后不丢音轨。
-    返回处理统计 {frames, width, height, fps}。
+    返回处理统计 {frames, width, height, fps, codec}。
+
+    GPU 加速参数：
+    - hw_encoder: auto / none / nvenc / qsv / amf / d3d12va / mf。
+      硬件编码器不可用时自动回退 libx264（显式指定不可用则报错）。
+    - hw_codec:   h264 / hevc（仅硬件编码器生效；libx264 固定输出 H.264）。
+    - hw_decode:  是否启用硬件解码（-hwaccel auto，失败自动回退软件解码）。
+
+    并行参数：
+    - parallel: 0=自动（2 个合成 worker），1=串行（旧行为），N=指定 worker 数。
+      并行流水线把"读帧/合成/写入"三阶段解耦：主线程读帧、N 个 worker 线程
+      并行合成、独立写线程按序喂给编码器，重叠 CPU 帧处理与 ffmpeg 消费。
     """
     meta = probe(input_path)
     W, H = meta["width"], meta["height"]
@@ -96,6 +111,19 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
 
     comp = WatermarkCompositor(cfg, out_w, out_h, fps)
 
+    # 选择编码器（GPU 硬件编码 / libx264 回退），quality=None 让
+    # imageio-ffmpeg 不附加 -crf/-qscale:v，完全由 output_params 控制
+    codec, out_params = resolve_encode(hw_encoder, hw_codec, crf, preset,
+                                       out_w, out_h, fps)
+
+    # 并行 worker 数：0=自动（2~4，按 CPU 核数），1=串行，N=指定 worker 数
+    if parallel > 1:
+        workers = parallel
+    elif parallel == 1:
+        workers = 1
+    else:
+        workers = min(4, max(2, os.cpu_count() or 2))
+
     out_dir = os.path.dirname(os.path.abspath(output_path)) or "."
     suffix = os.path.splitext(output_path)[1] or ".mp4"
     fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix=".vw_tmp_", dir=out_dir)
@@ -108,24 +136,20 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
         pix_fmt_in="rgb24",
         pix_fmt_out=pix_fmt_out,
         fps=out_fps or fps,
-        codec="libx264",
+        codec=codec,
+        quality=None,
         macro_block_size=1,
-        output_params=["-crf", str(crf), "-preset", preset],
+        output_params=out_params,
     )
     writer.send(None)  # 启动写入生成器（imageio-ffmpeg 约定）
     try:
-        gen = imageio_ffmpeg.read_frames(input_path, pix_fmt="rgb24")
-        next(gen)  # 首个产出为元数据 dict，跳过
-        for frame_bytes in gen:
-            img = Image.frombytes("RGB", (W, H), frame_bytes)
-            if (out_w, out_h) != (W, H):
-                img = img.resize((out_w, out_h), Image.LANCZOS)
-            t = done / fps
-            comp.apply(img, t)
-            writer.send(img.tobytes())
-            done += 1
-            if progress_cb:
-                progress_cb(done, total)
+        gen = _open_frames_reader(input_path, hw_decode)
+        if workers > 1:
+            done = _run_pipelined(gen, comp, writer, W, H, out_w, out_h, fps,
+                                  total, progress_cb, workers)
+        else:
+            done = _run_serial(gen, comp, writer, W, H, out_w, out_h, fps,
+                               total, progress_cb)
     finally:
         writer.close()
 
@@ -135,7 +159,131 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-    return {"frames": done, "width": out_w, "height": out_h, "fps": fps}
+    return {"frames": done, "width": out_w, "height": out_h, "fps": fps,
+            "codec": codec}
+
+
+def _run_serial(gen, comp, writer, W, H, out_w, out_h, fps, total,
+                progress_cb) -> int:
+    """串行读帧->合成->写入（保留旧行为）。"""
+    done = 0
+    for frame_bytes in gen:
+        img = Image.frombytes("RGB", (W, H), frame_bytes)
+        if (out_w, out_h) != (W, H):
+            img = img.resize((out_w, out_h), Image.LANCZOS)
+        comp.apply(img, done / fps)
+        writer.send(img.tobytes())
+        done += 1
+        if progress_cb:
+            progress_cb(done, total)
+    return done
+
+
+def _run_pipelined(gen, comp, writer, W, H, out_w, out_h, fps, total,
+                   progress_cb, workers) -> int:
+    """多线程流水线：主线程读帧 -> N 个 worker 并行合成 -> 写线程按序编码。
+
+    - 有界队列做背压（内存占用封顶，ffmpeg 慢时自动限速）；
+    - 写线程按帧序号保序输出，进度在写线程推进（单调递增）；
+    - Pillow 的建图/合成/拷贝部分释放 GIL，多 worker 可重叠 CPU 帧处理
+      与 ffmpeg 消费，消除逐帧同步推送导致的编码器空等。
+    """
+    import queue as _queue
+    import threading as _threading
+
+    raw_q: "_queue.Queue" = _queue.Queue(maxsize=workers * 2)
+    out_q: "_queue.Queue" = _queue.Queue(maxsize=workers * 2)
+    state = {"done": 0, "error": None}
+    sentinel = object()
+
+    def worker() -> None:
+        while True:
+            item = raw_q.get()
+            try:
+                if item is sentinel:
+                    return
+                seq, fb = item
+                try:
+                    img = Image.frombytes("RGB", (W, H), fb)
+                    if (out_w, out_h) != (W, H):
+                        img = img.resize((out_w, out_h), Image.LANCZOS)
+                    comp.apply(img, seq / fps)
+                    out_q.put((seq, img.tobytes()))
+                except Exception as exc:  # noqa: BLE001
+                    if state["error"] is None:
+                        state["error"] = exc
+                    out_q.put((seq, None))
+            finally:
+                raw_q.task_done()
+
+    def wthread() -> None:
+        next_seq = 0
+        pending: dict = {}
+        while True:
+            item = out_q.get()
+            if item is sentinel:
+                # 所有帧已入队，此时 pending 应为空
+                return
+            seq, payload = item
+            pending[seq] = payload
+            while next_seq in pending:
+                p = pending.pop(next_seq)
+                if p is not None:
+                    writer.send(p)
+                state["done"] += 1
+                if progress_cb:
+                    progress_cb(state["done"], total)
+                next_seq += 1
+
+    workers_threads = [_threading.Thread(target=worker, daemon=True)
+                       for _ in range(workers)]
+    wt = _threading.Thread(target=wthread, daemon=True)
+    for t in workers_threads:
+        t.start()
+    wt.start()
+
+    try:
+        for seq, frame_bytes in enumerate(gen):
+            raw_q.put((seq, frame_bytes))
+        for _ in workers_threads:
+            raw_q.put(sentinel)
+        for t in workers_threads:
+            t.join()
+        out_q.put(sentinel)
+        wt.join()
+    finally:
+        # 异常或提前退出时确保队列与线程收尾
+        try:
+            out_q.put_nowait(sentinel)
+        except Exception:  # noqa: BLE001
+            pass
+
+    if state["error"] is not None:
+        raise state["error"]
+    return state["done"]
+
+
+def _open_frames_reader(input_path: str, hw_decode: bool):
+    """打开逐帧读取生成器（首个元数据已跳过）；硬件解码失败自动回退软解。
+
+    read_frames 首产出为元数据 dict，必须先 next() 跳过再迭代帧字节；
+    若硬件解码在头部解析阶段失败（如驱动/格式不兼容），自动用纯软件解码
+    重启读取，保证整体流程不中断。
+    """
+    if not hw_decode:
+        gen = imageio_ffmpeg.read_frames(input_path, pix_fmt="rgb24")
+        next(gen)
+        return gen
+    try:
+        gen = imageio_ffmpeg.read_frames(
+            input_path, pix_fmt="rgb24",
+            input_params=build_decode_input_params(True))
+        next(gen)
+        return gen
+    except Exception:  # noqa: BLE001 —— 硬件解码失败回退软件解码
+        gen = imageio_ffmpeg.read_frames(input_path, pix_fmt="rgb24")
+        next(gen)
+        return gen
 
 
 # ---------------------------------------------------------------------------

@@ -50,11 +50,12 @@ def main():
         print("输入样片本身无音频，无法继续。")
         return 1
 
-    # 2) 处理并保留音频
+    # 2) 处理并保留音频（固定 CPU 编码路径，保证确定性）
     out_audio = os.path.join(OUT, "audio_out.mp4")
     cfg = WatermarkConfig(mode="tiled", kind="text", text="音频测试")
     print(f"处理 -> {os.path.basename(out_audio)} ...")
-    process(src_audio, out_audio, cfg, crf=23, preset="veryfast")
+    process(src_audio, out_audio, cfg, crf=23, preset="veryfast",
+            hw_encoder="none", hw_decode=False)
     print("输出流信息：")
     print("\n".join("   " + l for l in streams_info(out_audio).splitlines()
                     if "Stream" in l))
@@ -67,7 +68,8 @@ def main():
         generate_sample_video(src_vo, duration=3.0, with_audio=False)
     out_vo = os.path.join(OUT, "voiceonly_out.mp4")
     print(f"处理 -> {os.path.basename(out_vo)} ...")
-    process(src_vo, out_vo, cfg, crf=23, preset="veryfast")
+    process(src_vo, out_vo, cfg, crf=23, preset="veryfast",
+            hw_encoder="none", hw_decode=False)
     print("输出流信息：")
     print("\n".join("   " + l for l in streams_info(out_vo).splitlines()
                     if "Stream" in l))
