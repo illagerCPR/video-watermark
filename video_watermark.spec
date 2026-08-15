@@ -1,8 +1,8 @@
-# PyInstaller 打包配置：生成独立 视频水印.exe（单文件、无控制台窗口）
+# PyInstaller 打包配置：生成独立 VideoWatermark.exe（单文件、无控制台窗口）
 #
-# 构建：  .venv\Scripts\pyinstaller.exe 视频水印.spec --noconfirm
-# 产物：  dist\视频水印.exe
-# 自检：  视频水印.exe --selftest   （离屏构建主窗口，退出码 0 = 正常）
+# 构建：  .venv\Scripts\pyinstaller.exe video_watermark.spec --noconfirm
+# 产物：  dist\VideoWatermark.exe
+# 自检：  VideoWatermark.exe --selftest   （离屏构建主窗口，退出码 0 = 正常）
 from PyInstaller.utils.hooks import collect_data_files
 
 # 打包 imageio-ffmpeg 内置的静态 ffmpeg 二进制（binaries\ffmpeg-*.exe），保证离线可用
@@ -28,7 +28,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="视频水印",
+    name="VideoWatermark",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

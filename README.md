@@ -99,11 +99,11 @@ requirements.txt         # 依赖清单
 
 ```bat
 .venv\Scripts\python.exe -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller
-.venv\Scripts\pyinstaller.exe "视频水印.spec" --noconfirm
+.venv\Scripts\pyinstaller.exe "video_watermark.spec" --noconfirm
 ```
 
-- 产物：`dist\视频水印.exe`（单文件、无控制台，约 200~300MB，已内置 ffmpeg 离线可用）
-- 自检：运行 `dist\视频水印.exe --selftest`，退出码 0 表示打包正常
+- 产物：`dist\VideoWatermark.exe`（单文件、无控制台，约 200~300MB，已内置 ffmpeg 离线可用）
+- 自检：运行 `dist\VideoWatermark.exe --selftest`，退出码 0 表示打包正常
 - 首次启动解压较慢属正常现象（单文件模式）
 
 ## 🧪 测试与验证
