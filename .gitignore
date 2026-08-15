@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 输出与素材
+outputs/
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.png
+*.jpg
+*.jpeg
+
+# PyInstaller 构建产物
+build/
+dist/
+*.spec.bak
+
+# 运行时日志
+*.log
+gui_error.log
+
+# 工具
+.vscode/
+.idea/
