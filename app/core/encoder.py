@@ -7,8 +7,10 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import tempfile
 from typing import Callable, Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -59,7 +61,8 @@ def probe(path: str) -> dict:
     if width == 0 or fps == 0:
         raise RuntimeError(f"无法解析视频信息：{path}\n{stderr[-500:]}")
     return {"width": width, "height": height, "fps": fps,
-            "frames": frames, "duration_sec": dur}
+            "frames": frames, "duration_sec": dur,
+            "has_audio": bool(re.search(r"Audio:\s*\S+", stderr))}
 
 
 # ---------------------------------------------------------------------------
@@ -71,8 +74,10 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
             crf: int = 23, preset: str = "medium",
             scale: float = 1.0, out_fps: Optional[float] = None,
             pix_fmt_out: str = "yuv420p") -> dict:
-    """读输入视频 -> 逐帧叠加水印 -> 编码输出。
+    """读输入视频 -> 逐帧叠加水印 -> 编码输出，并保留原音频。
 
+    视频帧通过 imageio-ffmpeg 逐帧处理；音频流用内置 ffmpeg 从原视频
+    无损复制（copy）合并回输出，保证转换后不丢音轨。
     返回处理统计 {frames, width, height, fps}。
     """
     meta = probe(input_path)
@@ -91,9 +96,14 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
 
     comp = WatermarkCompositor(cfg, out_w, out_h, fps)
 
+    out_dir = os.path.dirname(os.path.abspath(output_path)) or "."
+    suffix = os.path.splitext(output_path)[1] or ".mp4"
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix=".vw_tmp_", dir=out_dir)
+    os.close(fd)
+
     done = 0
     writer = imageio_ffmpeg.write_frames(
-        output_path,
+        tmp_path,
         (out_w, out_h),
         pix_fmt_in="rgb24",
         pix_fmt_out=pix_fmt_out,
@@ -119,7 +129,70 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
     finally:
         writer.close()
 
+    try:
+        _merge_audio(input_path, tmp_path, output_path, fps_out=out_fps or fps)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
     return {"frames": done, "width": out_w, "height": out_h, "fps": fps}
+
+
+# ---------------------------------------------------------------------------
+# 音频保留
+# ---------------------------------------------------------------------------
+
+def _merge_audio(input_path: str, video_tmp: str, output_path: str,
+                 fps_out: float) -> None:
+    """把原视频的音频流合并到已处理的无音频视频上。
+
+    - 输入有音频：`-map 1:a:0` 复制原音频流（`-c:a copy` 无损），
+      时长对齐（-shortest），保证视频与音频同步。
+    - 输入无音频：直接改名输出（纯视频）。
+    """
+    exe = get_ffmpeg_exe()
+    r = subprocess.run([exe, "-i", input_path], capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
+    if "Audio:" not in r.stderr:
+        # 原视频没有音频流 -> 直接以视频文件收尾
+        os.replace(video_tmp, output_path)
+        return
+
+    # 有音频：视频取已处理帧，音频从原视频复制；时长取两者较短
+    cmd = [
+        exe, "-y",
+        "-i", video_tmp,          # 0: 已加水的视频（无音频）
+        "-i", input_path,         # 1: 原视频（含音频）
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",
+        "-c:a", "copy",
+        "-shortest",
+        output_path,
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    if res.returncode == 0:
+        return
+
+    # 容器不兼容原音频编码（如 vorbis/opus 放入 mp4）时，回退重编码为 AAC
+    fallback = [
+        exe, "-y",
+        "-i", video_tmp,
+        "-i", input_path,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-shortest",
+        output_path,
+    ]
+    res2 = subprocess.run(fallback, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    if res2.returncode != 0:
+        raise RuntimeError(
+            f"音频合并失败：{res2.stderr[-500:]}")
 
 
 # ---------------------------------------------------------------------------
@@ -127,18 +200,23 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
 # ---------------------------------------------------------------------------
 
 def generate_sample_video(path: str, size: tuple = (640, 360),
-                          duration: float = 5.0, fps: int = 30) -> None:
-    """用 lavfi 生成一段彩色动态样片（含 H.264 编码）。"""
+                          duration: float = 5.0, fps: int = 30,
+                          with_audio: bool = True) -> None:
+    """用 lavfi 生成一段彩色动态样片（含 H.264 视频，可选音频）。"""
     exe = get_ffmpeg_exe()
     w, h = size
     cmd = [
         exe, "-y",
         "-f", "lavfi", "-i",
         f"testsrc2=duration={duration}:size={w}x{h}:rate={fps}",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-crf", "23", "-preset", "medium",
-        path,
     ]
+    if with_audio:
+        cmd += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={duration}"]
+    cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-crf", "23", "-preset", "medium"]
+    if with_audio:
+        cmd += ["-c:a", "aac", "-b:a", "128k", "-shortest"]
+    cmd.append(path)
     subprocess.run(cmd, check=True, capture_output=True)
 
 
