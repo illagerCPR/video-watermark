@@ -124,4 +124,8 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # 打包成 exe 后如需用进程池，子进程会重执行本入口，先 freeze_support 防重复执行
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     sys.exit(main())

@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor, QImage, QPixmap
@@ -88,6 +89,8 @@ class MainWindow(QMainWindow):
         self._worker: RenderWorker | None = None
         self._text_color = (255, 255, 255)
         self._stroke_color = (0, 0, 0)
+        self._progress_start = None
+        self._progress_prev = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -371,8 +374,14 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("")
         self.progress_bar.setVisible(False)
         lay.addWidget(self.progress_bar)
+        self.progress_status = QLabel("")
+        self.progress_status.setWordWrap(True)
+        self.progress_status.setStyleSheet("color:#888; font-size:12px;")
+        self.progress_status.setVisible(False)
+        lay.addWidget(self.progress_status)
 
         export_btn = QPushButton("生成视频")
         export_btn.clicked.connect(self._on_export)
@@ -626,8 +635,14 @@ class MainWindow(QMainWindow):
 
         cfg = self._cfg_from_ui()
         self._export_btn.setEnabled(False)
+        self._progress_start = None
+        self._progress_prev = None
         self.progress_bar.setVisible(True)
+        self.progress_status.setVisible(True)
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("")
+        self.progress_status.setText("正在处理…")
 
         self._worker = RenderWorker(
             input_path, output_path, cfg,
@@ -643,12 +658,43 @@ class MainWindow(QMainWindow):
         self._worker.error.connect(self._on_error)
         self._worker.start()
 
+    @staticmethod
+    def _format_eta(sec: float) -> str:
+        sec = max(0, int(sec))
+        return f"{sec // 60}:{sec % 60:02d}"
+
     def _on_progress(self, done, total):
-        if total:
-            self.progress_bar.setValue(done * 100 // total)
+        if self._progress_start is None:
+            self._progress_start = time.monotonic()
+            self._progress_prev = (0, self._progress_start)
+        now = time.monotonic()
+        if total and total > 0:
+            self.progress_bar.setRange(0, total)
+            self.progress_bar.setValue(min(done, total))
+            self.progress_bar.setFormat("第 %v/%m 帧 (%p%)")
+            pct = done * 100 // total
+            # 每 0.5s 采样一次算速率 / 剩余时间，避免进度条刷新过频
+            prev_done, prev_t = self._progress_prev
+            dt = now - prev_t
+            if dt >= 0.5 and done > prev_done:
+                rate = (done - prev_done) / dt
+                eta = (total - done) / rate if rate > 0 else 0.0
+                self.progress_status.setText(
+                    f"正在处理… 第 {done}/{total} 帧 ({pct}%)  "
+                    f"≈{rate:.1f} 帧/秒  剩余约 {self._format_eta(eta)}")
+                self._progress_prev = (done, now)
+            else:
+                self.progress_status.setText(
+                    f"正在处理… 第 {done}/{total} 帧 ({pct}%)")
+        else:
+            self.progress_bar.setRange(0, 0)  # 忙碌模式
+            self.progress_status.setText("正在处理…（无法获取总帧数）")
 
     def _on_done(self, stats):
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
+        self.progress_bar.setFormat("")
+        self.progress_status.setText("处理完成")
         self._export_btn.setEnabled(True)
         codec = stats.get("codec", "libx264")
         hw_note = "（硬件编码）" if codec and codec != "libx264" else "（CPU 编码）"
@@ -659,6 +705,9 @@ class MainWindow(QMainWindow):
             f"输出：{self.output_edit.text()}")
 
     def _on_error(self, msg):
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setFormat("")
+        self.progress_status.setText("处理失败")
         self._export_btn.setEnabled(True)
         QMessageBox.critical(self, "生成失败", str(msg))
 

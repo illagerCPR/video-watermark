@@ -19,6 +19,7 @@
 - **出现时间范围**：只在指定时间段显示水印
 - **实时预览**：预览任意时刻的水印效果 + 移动轨迹示意图
 - **批量处理**：多视频一次生成，逐文件进度
+- **详细帧级进度（v0.2.0 起）**：单文件导出与批量处理均显示逐帧进度（第 X/Y 帧 + 百分比 + 处理速度 + 预计剩余时间）
 - **输出编码**：格式（MP4/MOV/MKV/AVI）、质量 CRF、编码预设、分辨率缩放
 - **保留原音频**：输出视频完整保留原始音轨（无损复制；容器不兼容时自动转为 AAC）
 - **一键定位**：输入/输出视频旁的「打开位置」按钮，直接在资源管理器打开并选中文件
@@ -93,8 +94,8 @@ GPU 相关：`--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf`、`--hw-codec h26
 | 时间范围 | 水印出现/消失时间 |
 | 输出设置 | 格式、质量 CRF、编码预设、分辨率缩放、**硬件编码/视频编码/硬件解码**（含「检测」按钮） |
 | 预览 | 「预览帧」看效果、「轨迹示意」看移动路径 |
-| 生成视频 | 单文件导出（后台线程，带进度条，自动并行流水线） |
-| 批量处理 | 多文件队列 + **并行数**设置，统一参数批量生成 |
+| 生成视频 | 单文件导出（后台线程，进度条显示**帧数/百分比/速率/剩余时间**，自动并行流水线） |
+| 批量处理 | 多文件队列 + **并行数**设置，统一参数批量生成；文件进度条 + **当前文件帧级进度** |
 
 ## 📁 项目结构
 
@@ -129,8 +130,9 @@ requirements.txt         # 依赖清单
 ```
 
 - 产物：`dist\VideoWatermark.exe`（单文件、无控制台，约 86MB，已内置 ffmpeg 离线可用，含 GPU 硬件加速）
-- 自检：运行 `dist\VideoWatermark.exe --selftest`，退出码 0 表示打包正常
+- 自检：运行 `dist\VideoWatermark.exe --selftest`，退出码 0 表示打包正常；自检包含**打包环境下进程池可用性验证**（批量并行的子进程不会重新弹窗、能正常执行）
 - 首次启动解压较慢属正常现象（单文件模式）
+- **批量并行 ≥2 在打包 exe 下正常**：入口已加 `multiprocessing.freeze_support()`（v0.2.0 修复，此前子进程会重复弹出主窗口）
 
 ## 🧪 测试与验证（9 套）
 
@@ -142,9 +144,9 @@ requirements.txt         # 依赖清单
 .venv\Scripts\python.exe scripts\verify_time_range.py   rem 时间范围验证
 .venv\Scripts\python.exe scripts\verify_audio.py        rem 音频保留验证
 .venv\Scripts\python.exe scripts\gui_smoke.py           rem GUI 离屏冒烟
-.venv\Scripts\python.exe scripts\gui_export_test.py     rem GUI 导出端到端
+.venv\Scripts\python.exe scripts\gui_export_test.py     rem GUI 导出端到端（含帧级进度断言）
 .venv\Scripts\python.exe scripts\step3_export_test.py   rem 编码参数端到端
-.venv\Scripts\python.exe scripts\step4_batch_test.py    rem 批量端到端（含并行）
+.venv\Scripts\python.exe scripts\step4_batch_test.py    rem 批量端到端（并行+串行，含帧级进度断言）
 .venv\Scripts\python.exe scripts\step1_demo.py          rem 生成 4 种样例输出
 ```
 

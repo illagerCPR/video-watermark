@@ -14,6 +14,11 @@ else:
     from .ui.main_window import MainWindow
 
 
+def _selftest_double(x: int) -> int:
+    """供 --selftest 的进程池子进程调用（模块级才能跨进程 pickle）。"""
+    return x * 2
+
+
 def main() -> int:
     from PySide6.QtWidgets import QApplication
 
@@ -50,6 +55,14 @@ def main() -> int:
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+        # 3) 批量并行用到的进程池在打包环境下可用：
+        #    freeze_support() 保证子进程不重新弹主窗口、正常执行 worker。
+        #    若缺 freeze_support，子进程会弹窗阻塞，pool.submit 失败/超时 -> 自检失败。
+        import concurrent.futures
+
+        with concurrent.futures.ProcessPoolExecutor(max_workers=1) as pool:
+            ok = ok and pool.submit(_selftest_double, 21).result(timeout=60) == 42
+
         print(f"SELFTEST_OK ffmpeg={ffmpeg_exe}" if ok else "SELFTEST_FAIL",
               flush=True)
         return 0 if ok else 1
@@ -62,6 +75,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # 打包（PyInstaller onefile）后，批量并行用 ProcessPoolExecutor 拉起的
+    # 子进程会重新执行本入口；必须在此调用 freeze_support()，否则子进程
+    # 会重复执行 main() 弹出新主窗口而不会真正跑 worker。
+    # 开发模式（python -m app.main）下该调用是无副作用 no-op。
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     # 启动失败时把错误写入 gui_error.log（pythonw 静默启动时也能排查）
     try:
         sys.exit(main())
