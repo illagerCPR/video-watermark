@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -109,6 +110,10 @@ class MainWindow(QMainWindow):
         in_btn = QPushButton("浏览…")
         in_btn.clicked.connect(self._pick_input)
         in_row.addWidget(in_btn)
+        in_open = QPushButton("打开位置")
+        in_open.setToolTip("在资源管理器中打开输入视频所在文件夹")
+        in_open.clicked.connect(lambda: self._open_location(self.input_edit.text()))
+        in_row.addWidget(in_open)
         fl.addRow("输入视频", in_row)
 
         self.output_edit = QLineEdit()
@@ -118,6 +123,10 @@ class MainWindow(QMainWindow):
         out_btn = QPushButton("浏览…")
         out_btn.clicked.connect(self._pick_output)
         out_row.addWidget(out_btn)
+        out_open = QPushButton("打开位置")
+        out_open.setToolTip("在资源管理器中打开输出视频所在文件夹")
+        out_open.clicked.connect(lambda: self._open_location(self.output_edit.text()))
+        out_row.addWidget(out_open)
         fl.addRow("输出视频", out_row)
         lay.addWidget(file_box)
 
@@ -465,6 +474,22 @@ class MainWindow(QMainWindow):
             self, "选择输出视频", "", "MP4 视频 (*.mp4);;所有文件 (*)")
         if path:
             self.output_edit.setText(path)
+
+    def _open_location(self, path: str):
+        """在资源管理器中打开指定文件所在位置（若文件不存在则打开其目录）。"""
+        path = path.strip().strip('"')
+        if not path:
+            QMessageBox.information(self, "提示", "请先填写要打开的路径")
+            return
+        folder = os.path.dirname(os.path.abspath(path))
+        if os.path.isfile(path):
+            # 文件存在 -> 资源管理器中选中该文件
+            subprocess.Popen(f'explorer /select,"{os.path.abspath(path)}"')
+        elif os.path.isdir(folder):
+            # 文件不存在（如尚未生成的输出）-> 打开其所在目录
+            subprocess.Popen(f'explorer "{folder}"')
+        else:
+            QMessageBox.warning(self, "提示", f"路径不存在：{path}")
 
     def _pick_image(self):
         path, _ = QFileDialog.getOpenFileName(
