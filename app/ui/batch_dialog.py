@@ -11,6 +11,8 @@ import multiprocessing
 import os
 import sys
 import threading
+import time
+from collections import deque
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -158,6 +160,9 @@ class BatchDialog(QDialog):
         self.hw_codec = hw_codec
         self.hw_decode = hw_decode
         self._worker: BatchWorker | None = None
+        # 逐文件帧速率滑动窗口采样（文件序号 -> deque[(已处理帧, 时刻)]）与上次刷新时刻
+        self._batch_rate: dict[int, deque] = {}
+        self._batch_rate_last: dict[int, float] = {}
 
         self.setWindowTitle("批量处理")
         self.resize(640, 480)
@@ -317,6 +322,8 @@ class BatchDialog(QDialog):
         self.frame_bar.setRange(0, 0)
         self.frame_bar.setFormat("")
         self.frame_label.setText("帧进度：—")
+        self._batch_rate.clear()
+        self._batch_rate_last.clear()
         self._jobs = jobs
         # 跨进程帧进度队列：用 Manager().Queue()（代理对象可安全传给进程池 worker；
         # 原生 multiprocessing.Queue 只能靠继承共享，作参数传递会报
@@ -355,16 +362,44 @@ class BatchDialog(QDialog):
         self.log.appendPlainText(msg)
         self.status_label.setText(f"已完成 {idx + 1}/{self.file_list.count()}")
 
+    @staticmethod
+    def _format_eta(sec: float) -> str:
+        sec = max(0, int(sec))
+        return f"{sec // 60}:{sec % 60:02d}"
+
     def _on_frame_progress(self, idx, done, ftotal):
         jobs = getattr(self, "_jobs", None)
         name = os.path.basename(jobs[idx][0]) if jobs and idx < len(jobs) else f"文件{idx + 1}"
+        now = time.monotonic()
         if ftotal and ftotal > 0:
             self.frame_bar.setRange(0, ftotal)
             self.frame_bar.setValue(min(done, ftotal))
             self.frame_bar.setFormat("第 %v/%m 帧 (%p%)")
             pct = done * 100 // ftotal
-            self.frame_label.setText(
-                f"文件 {idx + 1}/{len(jobs)}：{name}  第 {done}/{ftotal} 帧 ({pct}%)")
+            # 每个文件独立滑动窗口（约 2s）平均速率，平滑不闪烁
+            samples = self._batch_rate.setdefault(idx, deque())
+            samples.append((done, now))
+            while len(samples) > 2 and now - samples[0][1] > 2.0:
+                samples.popleft()
+            rate = 0.0
+            if len(samples) >= 2:
+                d0, t0 = samples[0]
+                d1, t1 = samples[-1]
+                if d1 > d0 and t1 > t0:
+                    rate = (d1 - d0) / (t1 - t0)
+            # 节流刷新文本（每 0.3s），文案格式恒定：始终带速率
+            if now - self._batch_rate_last.get(idx, 0.0) >= 0.3 or done >= ftotal:
+                if rate > 0:
+                    eta = (ftotal - done) / rate
+                    self.frame_label.setText(
+                        f"文件 {idx + 1}/{len(jobs)}：{name}  "
+                        f"第 {done}/{ftotal} 帧 ({pct}%)  "
+                        f"≈{rate:.1f} 帧/秒  剩余约 {self._format_eta(eta)}")
+                else:
+                    self.frame_label.setText(
+                        f"文件 {idx + 1}/{len(jobs)}：{name}  "
+                        f"第 {done}/{ftotal} 帧 ({pct}%)")
+                self._batch_rate_last[idx] = now
         else:
             self.frame_bar.setRange(0, 0)  # 忙碌模式（总帧数未知）
             self.frame_label.setText(f"文件 {idx + 1}/{len(jobs)}：{name}  处理中…")

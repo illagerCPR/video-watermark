@@ -19,6 +19,38 @@ def _selftest_double(x: int) -> int:
     return x * 2
 
 
+def _apply_app_icon(app) -> None:
+    """设置窗口/任务栏图标。
+
+    开发模式读取项目根目录 icon.ico；打包（PyInstaller onefile）后从
+    sys._MEIPASS 读取内嵌副本（spec 已把 icon.ico 加入 datas）。
+    图标缺失或加载失败时静默跳过，不影响启动。
+    """
+    from PySide6.QtGui import QIcon
+
+    try:
+        base = getattr(sys, "_MEIPASS", None)
+        if base:
+            ico = os.path.join(base, "icon.ico")
+        else:
+            ico = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "icon.ico")
+        if os.path.isfile(ico):
+            app.setWindowIcon(QIcon(ico))
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Windows 任务栏：设置显式 AppUserModelID，避免任务栏/标题栏使用默认图标
+    try:
+        if os.name == "nt":
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "VideoWatermark")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> int:
     from PySide6.QtWidgets import QApplication
 
@@ -69,6 +101,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName("视频水印工具")
+    _apply_app_icon(app)
     win = MainWindow()
     win.show()
     return app.exec()

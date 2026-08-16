@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from collections import deque
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor, QImage, QPixmap
@@ -91,6 +92,8 @@ class MainWindow(QMainWindow):
         self._stroke_color = (0, 0, 0)
         self._progress_start = None
         self._progress_prev = None
+        # 帧速率滑动窗口采样（(已处理帧, 时刻)），用于平滑速率显示
+        self._rate_samples = deque()
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -106,7 +109,9 @@ class MainWindow(QMainWindow):
     def _build_param_panel(self) -> QWidget:
         panel = QScrollArea()
         panel.setWidgetResizable(True)
-        panel.setFixedWidth(400)
+        # 左侧参数面板加宽（内容最小宽度约 537px），并强制隐藏横向滚动条
+        panel.setFixedWidth(480)
+        panel.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         body = QWidget()
         lay = QVBoxLayout(body)
 
@@ -272,6 +277,7 @@ class MainWindow(QMainWindow):
         ol.addRow("质量(CRF)", self._slider_row(self.crf_slider, self.crf_label))
         crf_hint = QLabel("CRF 越低质量越高、文件越大（0~51，推荐 18~28）")
         crf_hint.setStyleSheet("color:#888; font-size:11px;")
+        crf_hint.setWordWrap(True)
         ol.addRow(crf_hint)
 
         self.preset_combo = QComboBox()
@@ -282,12 +288,14 @@ class MainWindow(QMainWindow):
         ol.addRow("编码预设", self.preset_combo)
         preset_hint = QLabel("越快的预设编码越快、文件略大（ultrafast~veryslow）")
         preset_hint.setStyleSheet("color:#888; font-size:11px;")
+        preset_hint.setWordWrap(True)
         ol.addRow(preset_hint)
 
         self.scale_spin = self._dspin(0.1, 2.0, 1.0, 0.05)
         ol.addRow("分辨率缩放", self.scale_spin)
         scale_hint = QLabel("1.0 = 原分辨率；0.5 = 缩小一半；2.0 = 放大一倍")
         scale_hint.setStyleSheet("color:#888; font-size:11px;")
+        scale_hint.setWordWrap(True)
         ol.addRow(scale_hint)
 
         # 硬件加速（GPU 编码/解码）
@@ -326,6 +334,7 @@ class MainWindow(QMainWindow):
         ol.addRow(hw_info_row)
         hw_hint = QLabel("硬件编码可大幅加速导出（NVENC/QSV/AMF）；无 GPU 时自动回退 CPU 编码")
         hw_hint.setStyleSheet("color:#888; font-size:11px;")
+        hw_hint.setWordWrap(True)
         ol.addRow(hw_hint)
         lay.addWidget(out_box)
 
@@ -637,6 +646,7 @@ class MainWindow(QMainWindow):
         self._export_btn.setEnabled(False)
         self._progress_start = None
         self._progress_prev = None
+        self._rate_samples.clear()
         self.progress_bar.setVisible(True)
         self.progress_status.setVisible(True)
         self.progress_bar.setRange(0, 100)
@@ -673,19 +683,28 @@ class MainWindow(QMainWindow):
             self.progress_bar.setValue(min(done, total))
             self.progress_bar.setFormat("第 %v/%m 帧 (%p%)")
             pct = done * 100 // total
-            # 每 0.5s 采样一次算速率 / 剩余时间，避免进度条刷新过频
-            prev_done, prev_t = self._progress_prev
-            dt = now - prev_t
-            if dt >= 0.5 and done > prev_done:
-                rate = (done - prev_done) / dt
-                eta = (total - done) / rate if rate > 0 else 0.0
-                self.progress_status.setText(
-                    f"正在处理… 第 {done}/{total} 帧 ({pct}%)  "
-                    f"≈{rate:.1f} 帧/秒  剩余约 {self._format_eta(eta)}")
+            # 滑动窗口（约 2s）内平均速率：避免瞬时速率抖动导致文字闪烁
+            self._rate_samples.append((done, now))
+            while (len(self._rate_samples) > 2
+                   and now - self._rate_samples[0][1] > 2.0):
+                self._rate_samples.popleft()
+            rate = 0.0
+            if len(self._rate_samples) >= 2:
+                d0, t0 = self._rate_samples[0]
+                d1, t1 = self._rate_samples[-1]
+                if d1 > d0 and t1 > t0:
+                    rate = (d1 - d0) / (t1 - t0)
+            # 节流刷新文本（每 0.3s），文案格式恒定：始终带速率，避免闪烁
+            if now - self._progress_prev[1] >= 0.3 or done >= total:
+                if rate > 0:
+                    eta = (total - done) / rate
+                    self.progress_status.setText(
+                        f"正在处理… 第 {done}/{total} 帧 ({pct}%)  "
+                        f"≈{rate:.1f} 帧/秒  剩余约 {self._format_eta(eta)}")
+                else:
+                    self.progress_status.setText(
+                        f"正在处理… 第 {done}/{total} 帧 ({pct}%)")
                 self._progress_prev = (done, now)
-            else:
-                self.progress_status.setText(
-                    f"正在处理… 第 {done}/{total} 帧 ({pct}%)")
         else:
             self.progress_bar.setRange(0, 0)  # 忙碌模式
             self.progress_status.setText("正在处理…（无法获取总帧数）")

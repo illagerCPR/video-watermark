@@ -6,7 +6,8 @@
 from PyInstaller.utils.hooks import collect_data_files
 
 # 打包 imageio-ffmpeg 内置的静态 ffmpeg 二进制（binaries\ffmpeg-*.exe），保证离线可用
-datas = collect_data_files("imageio_ffmpeg")
+# 同时内嵌 icon.ico：既用于 exe 文件图标，也供运行时 setWindowIcon 读取（任务栏/标题栏图标）
+datas = collect_data_files("imageio_ffmpeg") + [("icon.ico", ".")]
 
 a = Analysis(
     ["app/main.py"],
