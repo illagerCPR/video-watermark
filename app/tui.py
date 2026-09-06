@@ -77,17 +77,23 @@ class PreviewScreen(ModalScreen):
 
 
 class ExportScreen(ModalScreen):
-    """导出进度屏：帧进度 + 平滑速率 + ETA + 取消。"""
+    """导出进度屏：帧进度 + 平滑速率 + ETA + 取消 + 实际使用的编码器/解码。"""
 
     BINDINGS = [("escape", "cancel_or_close", "取消/关闭")]
 
-    def __init__(self, total: int) -> None:
+    def __init__(self, total: int, codec: str = "", decode: str = "") -> None:
         super().__init__()
         self._total = max(1, total)
+        self._codec = codec
+        self._decode = decode
 
     def compose(self) -> ComposeResult:
         with Vertical(id="export_body"):
             yield Static("准备中…", id="export_status")
+            meta = "编码器：" + (self._codec or "…")
+            if self._decode:
+                meta += f" · 解码：{self._decode}"
+            yield Static(meta, id="export_meta")
             yield ProgressBar(total=100.0, show_eta=False, id="export_bar")
             with Horizontal():
                 yield Button("取消导出", id="export_cancel", variant="error")
@@ -130,11 +136,14 @@ class WatermarkTuiApp(App[None]):
     /* 滚动容器里 Horizontal 的 1fr 高会塌成 1 行（按钮 3 行画不下→滚到底也看不到最后一行），
        Input 默认 width:100% 会把同行按钮挤出 overflow:hidden 的行外 → 显式改为 auto/1fr */
     #form Horizontal { height: auto; }
-    #form Horizontal Input { width: 1fr; }
+    #form Horizontal Input, #form Horizontal Select { width: 1fr; }
+    /* 字段用途标签：与 3 行高的 Input/Select 同排，padding-top 对齐其中间文本行 */
+    .fld { width: 12; height: auto; padding: 1 0 0 1; color: $text-muted; }
     .section { color: $text-muted; text-style: bold; margin-top: 1; }
     Input, Select { margin-bottom: 0; }
     TextArea { height: 5; margin-bottom: 0; }
     #actions { height: auto; padding: 1 1; }
+    #hw_info { color: $text-muted; margin-bottom: 0; }
     #json_out {
         height: 1fr;
         border: round $primary;
@@ -145,6 +154,7 @@ class WatermarkTuiApp(App[None]):
     PreviewScreen Static { margin-bottom: 0; }
     ExportScreen #export_body { height: auto; padding: 1 2; }
     ExportScreen ProgressBar { margin-bottom: 1; }
+    #export_meta { color: $text-muted; margin-bottom: 1; }
     """
 
     BINDINGS = [("ctrl+q", "quit", "退出"), ("ctrl+s", "save_config", "保存配置"),
@@ -161,67 +171,87 @@ class WatermarkTuiApp(App[None]):
         self._last_ui_update: float = 0.0
 
     def compose(self) -> ComposeResult:
+        def fld(label: str, widget) -> Horizontal:
+            """带用途标签的字段行（预填值的 Input 没有占位符，用途全靠它）。"""
+            return Horizontal(Static(label, classes="fld"), widget)
+
         yield Header()
         with VerticalScroll(id="form"):
             yield Static("视频文件", classes="section")
-            yield Input(placeholder="输入视频路径", id="input_path")
-            yield Input(placeholder="输出视频路径（留空自动命名）", id="output_path")
+            yield fld("输入视频",
+                      Input(placeholder="输入视频路径", id="input_path"))
+            yield fld("输出视频",
+                      Input(placeholder="输出视频路径（留空自动命名）",
+                            id="output_path"))
 
             yield Static("水印来源", classes="section")
-            yield Select(KIND_CHOICES, value=KIND_TEXT, id="kind", allow_blank=False)
+            yield fld("来源", Select(KIND_CHOICES, value=KIND_TEXT,
+                                     id="kind", allow_blank=False))
             yield TextArea(placeholder="文字内容（支持多行）", id="text")
-            yield Input(placeholder="图片水印路径（来源=图片时使用）", id="image_path")
+            yield Input(placeholder="图片水印路径（来源=图片时使用）",
+                        id="image_path")
 
             yield Static("文字样式", classes="section")
-            yield Input(placeholder="字体（空 = 自动选系统中文字体）", id="font_name")
-            yield Input(value="48", id="font_size")
-            yield Input(value="255,255,255", id="text_color")
-            yield Input(value="90", id="text_opacity")
-            yield Input(value="0", id="stroke_width")
-            yield Input(value="0,0,0", id="stroke_color")
+            yield Input(placeholder="字体（空 = 自动选系统中文字体）",
+                        id="font_name")
+            yield fld("字号", Input(value="48", id="font_size"))
+            yield fld("颜色RGB", Input(value="255,255,255", id="text_color"))
+            yield fld("不透明度", Input(value="90", id="text_opacity"))
+            yield fld("描边宽度", Input(value="0", id="stroke_width"))
+            yield fld("描边色RGB", Input(value="0,0,0", id="stroke_color"))
 
             yield Static("图片样式", classes="section")
-            yield Input(value="0.3", id="img_scale")
-            yield Input(value="128", id="img_opacity")
-            yield Input(value="0", id="img_radius")
+            yield fld("图片缩放", Input(value="0.3", id="img_scale"))
+            yield fld("不透明度", Input(value="128", id="img_opacity"))
+            yield fld("圆角", Input(value="0", id="img_radius"))
 
             yield Static("模式", classes="section")
-            yield Select(MODE_CHOICES, value=MODE_TILED, id="mode", allow_blank=False)
+            yield fld("模式", Select(MODE_CHOICES, value=MODE_TILED,
+                                     id="mode", allow_blank=False))
 
             yield Static("平铺参数", classes="section")
-            yield Input(value="30.0", id="angle")
-            yield Input(value="260", id="tile_dx")
-            yield Input(value="160", id="tile_dy")
-            yield Input(value="0", id="offset_x")
-            yield Input(value="0", id="offset_y")
+            yield fld("角度(°)", Input(value="30.0", id="angle"))
+            yield fld("水平间距", Input(value="260", id="tile_dx"))
+            yield fld("垂直间距", Input(value="160", id="tile_dy"))
+            yield fld("水平偏移", Input(value="0", id="offset_x"))
+            yield fld("垂直偏移", Input(value="0", id="offset_y"))
 
             yield Static("移动参数", classes="section")
-            yield Select(TRAJ_CHOICES, id="trajectory", allow_blank=False)
-            yield Input(value="1.0", id="speed")
-            yield Input(value="0.2", id="motion_scale")
-            yield Input(value="200", id="motion_opacity")
+            yield fld("轨迹", Select(TRAJ_CHOICES, id="trajectory",
+                                     allow_blank=False))
+            yield fld("速度", Input(value="1.0", id="speed"))
+            yield fld("移动幅度", Input(value="0.2", id="motion_scale"))
+            yield fld("不透明度", Input(value="200", id="motion_opacity"))
             yield Checkbox("移动水印随时间自转", id="motion_rotate")
 
             yield Static("出现时间范围（秒，结束留空 = 直到结尾）", classes="section")
-            yield Input(value="0.0", id="start_sec")
+            yield fld("开始秒", Input(value="0.0", id="start_sec"))
             yield Input(placeholder="（空 = 直到结尾）", id="end_sec")
 
             yield Static("预览（需先填输入视频）", classes="section")
             with Horizontal():
+                yield Static("时间(s)", classes="fld")
                 yield Input(value="1.0", id="preview_time")
                 yield Button("预览帧 (F5)", id="preview_frame")
                 yield Button("轨迹示意 (F6)", id="preview_sketch")
 
             yield Static("输出与编码", classes="section")
-            yield Input(value="23", id="crf")
-            yield Select(PRESET_CHOICES, value="medium", id="preset", allow_blank=False)
-            yield Input(value="1.0", id="scale")
-            yield Select(HW_ENCODER_CHOICES, value="auto", id="hw_encoder",
-                         allow_blank=False)
-            yield Select(HW_CODEC_CHOICES, value="h264", id="hw_codec",
-                         allow_blank=False)
-            yield Checkbox("启用硬件解码（失败自动回退）", id="hw_decode", value=True)
-            yield Input(value="0", id="parallel")
+            yield fld("质量CRF", Input(value="23", id="crf"))
+            yield fld("编码预设", Select(PRESET_CHOICES, value="medium",
+                                         id="preset", allow_blank=False))
+            yield fld("分辨率缩放", Input(value="1.0", id="scale"))
+            yield fld("硬件编码", Select(HW_ENCODER_CHOICES, value="auto",
+                                         id="hw_encoder", allow_blank=False))
+            yield fld("视频编码", Select(HW_CODEC_CHOICES, value="h264",
+                                         id="hw_codec", allow_blank=False))
+            yield Checkbox("启用硬件解码（失败自动回退）", id="hw_decode",
+                           value=True)
+            yield fld("并行数", Input(value="0", id="parallel"))
+            with Horizontal():
+                yield Static("探测", classes="fld")
+                yield Button("检测硬件（同 GUI）", id="hw_detect")
+            yield Static("（点「检测硬件」探测本机可用的硬件编码器/解码器，"
+                         "实测需数秒）", id="hw_info")
 
             yield Static("配置文件", classes="section")
             yield Input(placeholder="配置 JSON 路径", id="config_path")
@@ -236,6 +266,7 @@ class WatermarkTuiApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._hw_info = self.query_one("#hw_info", Static)
         if self.config_path_arg:
             self.query_one("#config_path", Input).value = self.config_path_arg
             self._load_config()
@@ -423,6 +454,36 @@ class WatermarkTuiApp(App[None]):
             self._open_preview(with_sketch=False)
         elif event.button.id == "export_run":
             self._start_export()
+        elif event.button.id == "hw_detect":
+            self._detect_hw()
+
+    # ------------------------------------------------------------------
+    # 硬件检测（v0.5.4：与 GUI「检测」同源的探测，后台线程不卡 UI）
+    # ------------------------------------------------------------------
+    def _detect_hw(self) -> None:
+        info = self._hw_info
+        info.update("检测中…（对候选硬件编码器做极短样片实测，需数秒）")
+        self._hw_detect_worker()
+
+    @work(thread=True, exclusive=True, group="hw_detect")
+    def _hw_detect_worker(self) -> None:
+        from .core import ffbin
+        from .core.hwaccel import describe_available
+
+        try:
+            text = describe_available()
+            i = ffbin.info()
+            text += f"\n当前 ffmpeg：{i['exe']}（{i['source']}）"
+        except Exception as exc:  # noqa: BLE001
+            text = f"检测失败：{exc}"
+
+        def _apply() -> None:
+            try:
+                self._hw_info.update(text)
+            except ScreenStackError:
+                pass  # app 关闭竞态
+
+        self.call_from_thread(_apply)
 
     # ------------------------------------------------------------------
     # 导出（M4：后台线程 + 进度/速率/ETA + 取消）
@@ -446,13 +507,24 @@ class WatermarkTuiApp(App[None]):
             self.notify("输出路径不能与输入相同", severity="error")
             return
         from .core.encoder import probe
+        from .core.hwaccel import resolve_encode
         try:
-            total = probe(video)["frames"] or 0
+            meta = probe(video)
+            total = meta["frames"] or 0
         except Exception as exc:  # noqa: BLE001
             self.notify(f"无法读取视频信息：{exc}", severity="error")
             return
+        # 预显示实际将使用的编码器/解码（与 process() 内部同一决策入口）
+        try:
+            enc_name, _ = resolve_encode(
+                params["hw_encoder"], params["hw_codec"], params["crf"],
+                params["preset"], meta["width"], meta["height"], meta["fps"])
+        except Exception:  # noqa: BLE001
+            enc_name = params["hw_encoder"]
+        dec = ("硬件优先（失败自动回退软解）" if params["hw_decode"]
+               else "软件解码")
         self._cancel_event = threading.Event()
-        self.push_screen(ExportScreen(total))
+        self.push_screen(ExportScreen(total, codec=enc_name, decode=dec))
         self._export_worker(video, output, cfg, params, self._cancel_event)
 
     @work(thread=True, exclusive=True, group="export")

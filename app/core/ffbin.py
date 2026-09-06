@@ -46,6 +46,24 @@ _HW_SUFFIX = re.compile(r"_(nvenc|qsv|amf|mf|d3d12va)$")
 _info: dict = {"exe": None, "source": "未解析", "note": ""}
 
 
+def _dbg(msg: str) -> None:
+    """决策过程调试日志：VIDEO_WATERMARK_FFBIN_DEBUG=1 时启用。
+
+    写入 $TMPDIR（默认 /tmp）/video_watermark_ffbin_debug.log，用于排查
+    打包环境（AppImage / onefile）下系统 ffmpeg 探测失败等问题。
+    """
+    if not os.environ.get("VIDEO_WATERMARK_FFBIN_DEBUG"):
+        return
+    try:
+        path = os.path.join(
+            os.environ.get("TMPDIR", "/tmp" if os.name != "nt" else os.environ.get("TEMP", ".")),
+            "video_watermark_ffbin_debug.log")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def bundled_exe() -> str:
     """返回 imageio-ffmpeg 随包分发的二进制路径（忽略一切环境变量）。
 
@@ -66,13 +84,15 @@ def encoder_names(exe: str) -> set[str]:
         r = run_hidden([exe, "-hide_banner", "-encoders"],
                        capture_output=True, text=True,
                        encoding="utf-8", errors="replace", timeout=60)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _dbg(f"encoder_names({exe}) 异常: {exc!r}")
         return set()
     names: set[str] = set()
     for line in r.stdout.splitlines():
         m = re.match(r"\s*\S+\s+(\S+)", line)  # 第二列为编码器名
         if m:
             names.add(m.group(1))
+    _dbg(f"encoder_names({exe}) rc={r.returncode} names={len(names)}")
     return names
 
 
@@ -85,8 +105,12 @@ def _runnable(exe: str) -> bool:
         r = run_hidden([exe, "-version"], capture_output=True,
                        text=True, encoding="utf-8", errors="replace",
                        timeout=30)
-        return r.returncode == 0
-    except Exception:  # noqa: BLE001
+        ok = r.returncode == 0
+        _dbg(f"_runnable({exe}) rc={r.returncode} ok={ok}"
+             f" err={r.stderr.strip()[:200]!r}")
+        return ok
+    except Exception as exc:  # noqa: BLE001
+        _dbg(f"_runnable({exe}) 异常: {exc!r}")
         return False
 
 
@@ -122,20 +146,25 @@ def get_ffmpeg_exe() -> str:
     # 3) 自动选择：内置缺硬件编码器时尝试系统 ffmpeg
     try:
         inner = bundled_exe()
+        _dbg(f"auto: bundled={inner}")
         inner_hw = _hw_names(encoder_names(inner))
+        _dbg(f"auto: inner_hw={sorted(inner_hw)}")
         if inner_hw:
             return _use(inner, "内置二进制",
                         "自带硬件编码器: " + ",".join(sorted(inner_hw)[:4]))
 
         sys_ffmpeg = shutil.which("ffmpeg")
+        _dbg(f"auto: which(ffmpeg)={sys_ffmpeg!r}")
         if sys_ffmpeg:
             sys_hw = _hw_names(encoder_names(sys_ffmpeg))
             gained = sys_hw - inner_hw
+            _dbg(f"auto: sys_hw={sorted(sys_hw)} gained={sorted(gained)}")
             if gained and _runnable(sys_ffmpeg):
                 return _use(sys_ffmpeg, "系统 ffmpeg（自动切换）",
                             "新增硬件编码器: " + ",".join(sorted(gained)[:4]))
         return _use(inner, "内置二进制", "无可用硬件编码器，将使用 CPU 编码")
-    except Exception:  # noqa: BLE001  # 自动分支绝不影响启动
+    except Exception as exc:  # noqa: BLE001  # 自动分支绝不影响启动
+        _dbg(f"auto: 异常回退 {exc!r}")
         return _use(bundled_exe(), "内置二进制", "自动选择异常，已回退")
 
 

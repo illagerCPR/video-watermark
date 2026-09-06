@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from ..core import ffbin
 from ..core import preview
 from ..core.encoder import probe, process
-from ..core.hwaccel import describe_available, detect_encoders
+from ..core.hwaccel import describe_available, detect_encoders, resolve_encode
 from ..core.subproc import popen as popen_hidden  # 隐藏窗口启动 explorer（避免闪命令窗）
 from ..core.watermark import list_available_fonts
 from ..models import (
@@ -802,7 +802,18 @@ class MainWindow(QMainWindow):
         self.progress_status.setVisible(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("")
+        # 进度条旁显示本次将使用的编码器/解码（v0.5.4，与 TUI 导出屏一致）
+        hw_encoder = self.hw_encoder_combo.currentData() or "auto"
+        hw_codec = self.hw_codec_combo.currentData() or "h264"
+        try:
+            enc_name, _ = resolve_encode(
+                hw_encoder, hw_codec, self.crf_slider.value(),
+                self.preset_combo.currentData() or "medium",
+                1920, 1080, 30.0)
+        except Exception:  # noqa: BLE001
+            enc_name = hw_encoder
+        dec = "硬件优先" if self.hw_decode_check.isChecked() else "软件"
+        self.progress_bar.setFormat(f"编码器 {enc_name} · 解码 {dec} · %p%")
         self.progress_status.setText("正在处理…")
 
         self._worker = RenderWorker(
@@ -810,8 +821,8 @@ class MainWindow(QMainWindow):
             crf=self.crf_slider.value(),
             preset=self.preset_combo.currentData() or "medium",
             scale=self.scale_spin.value(),
-            hw_encoder=self.hw_encoder_combo.currentData() or "auto",
-            hw_codec=self.hw_codec_combo.currentData() or "h264",
+            hw_encoder=hw_encoder,
+            hw_codec=hw_codec,
             hw_decode=self.hw_decode_check.isChecked(),
         )
         self._worker.progress.connect(self._on_progress)

@@ -53,6 +53,7 @@
 - **交互式导出**：帧进度 + 平滑速率 + ETA + 一键取消（F7），后台线程渲染不卡界面
 - **配置文件**：`--config` 预载 / 界面内加载保存（与 GUI/CLI 完全互通的 JSON）
 - **TUI 启动器（v0.5.2）**：打包版推荐运行 **`VideoWatermarkTUI.exe`**（与主程序同目录）——它是控制台程序，cmd/PowerShell 会等待其退出，TUI 独占键盘；直接运行 `VideoWatermark.exe --tui` 时 shell 不等待 GUI 程序、会与 TUI 抢键（界面进得去但按键可能无响应，启动时会打印提示）
+- **字段标签 + 硬件检测（v0.5.4）**：全部参数行内显示用途标签；「检测硬件」按钮输出与 GUI 相同的编码器（实测）/解码器报告及当前 ffmpeg 二进制；导出进度旁显示本次实际使用的编码器与解码方式
 - **单 exe 双模式**：Windows exe 支持 `--tui` 参数（自动附加当前终端控制台，Windows Terminal / PowerShell / cmd 均可，v0.5.1 修复附加逻辑）；双击启动（无控制台）弹提示后退出（退出码 2），仍为 GUI 入口
 - **入口**：`python -m app.tui`、`python -m app.cli --tui`、Linux `./启动.sh --tui`、Windows `启动-tui.bat`
 - **按键**：`F5` 预览帧+轨迹 · `F6` 轨迹示意 · `F7` 开始导出 · `Ctrl+S` 保存配置 · `Esc` 返回/取消 · `Ctrl+Q` 退出
@@ -239,7 +240,7 @@ rem Windows（PowerShell）
 - **Linux 字体下拉为空 / 中文变方框**：确保安装了中文字体（如 `fonts-noto-cjk`、`fonts-wqy-microhei`），软件会自动递归枚举并默认选用可用的中文字体。
 - **Windows Terminal 里运行 `VideoWatermark.exe --tui` 弹"请从命令行启动"提示**：v0.5.1 已修复（此前控制台附加逻辑在 Windows Terminal 的 ConPTY 环境下失效）。若双击启动（无控制台），仍会提示后退出（退出码 2），属预期；排查可设 `VIDEO_WATERMARK_TUI_DEBUG=1` 看判定日志。
 - **Windows 运行 `VideoWatermark.exe --tui` 进得去界面但按键无响应（v0.5.2）**：cmd/PowerShell 启动 GUI 程序时不等待其退出，shell 继续读取控制台输入、与 TUI 抢键。改用同目录的 **`VideoWatermarkTUI.exe`** 启动（控制台程序，shell 会等待它，TUI 独占键盘）；或在 cmd 中 `start /wait VideoWatermark.exe --tui`。`python -m app.tui` / `启动-tui.bat` 不受影响。
-- **Linux 装了系统 ffmpeg 仍检测不到硬件编解码器**：①「检测」结果里**编码器**需实测可用——NVIDIA 需驱动（WSL2 需驱动直通），AMD/Intel 的 VAAPI **编码**暂不支持（回退 CPU，见已知限制）；②**解码器**自 v0.5.3 起会列出（NVIDIA NVDEC / Intel QSV / VAAPI 等），硬解在导出时自动协商、失败自动回退软解；③若应用在安装系统 ffmpeg **之前**就已启动，请重启应用再点「检测」（二进制解析与探测结果有缓存）。
+- **Linux 装了系统 ffmpeg 仍检测不到硬件编解码器**：①「检测」结果里**编码器**需实测可用——NVIDIA 需驱动（WSL2 需驱动直通），AMD/Intel 的 VAAPI **编码**暂不支持（回退 CPU，见已知限制）；②**解码器**自 v0.5.3 起会列出（NVIDIA NVDEC / Intel QSV / VAAPI 等），硬解在导出时自动协商、失败自动回退软解；③若应用在安装系统 ffmpeg **之前**就已启动，请重启应用再点「检测」（二进制解析与探测结果有缓存）；④**AppImage 版需 v0.5.4+**——此前 CI 构建的包因 PyInstaller 运行时目录中的旧 libstdc++ 被子进程继承，系统 ffmpeg 无法启动而静默回退内置（v0.5.4 修复）。
 
 ## ⚠️ 已知限制
 

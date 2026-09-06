@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import sys
 import tempfile
 from dataclasses import asdict
@@ -288,6 +289,43 @@ async def run_tests() -> None:
         await pilot6.resize_terminal(90, 26)
         await pilot6.pause(0.3)
         await check_form_layout("90x26")
+
+    # ---------- 10. 硬件检测按钮（v0.5.4：与 GUI「检测」同源） ----------
+    print("== 10. 硬件检测按钮 ==")
+    app7 = WatermarkTuiApp()
+    async with app7.run_test(size=(110, 40)) as pilot7:
+        btn = app7.query_one("#hw_detect", Button)
+        btn.scroll_visible(animate=False)
+        await pilot7.pause(0.5)
+        await pilot7.click(btn)
+        await pilot7.pause(0.5)
+        ok = False
+        for _ in range(400):  # 最多 40s：候选编码器需逐个实测编码
+            txt = str(app7._hw_info.render())
+            if "硬件解码器" in txt or "检测失败" in txt:
+                ok = "硬件解码器" in txt
+                break
+            await pilot7.pause(0.1)
+        check("检测输出含编码器+解码器报告", ok, txt[:60])
+        check("检测输出附当前二进制", "当前 ffmpeg" in txt)
+
+    # ---------- 11. 导出屏编码器/解码显示（v0.5.4） ----------
+    print("== 11. 导出屏编码器显示 ==")
+    app8 = WatermarkTuiApp()
+    tmp3 = Path(tempfile.mkdtemp())
+    src11 = tmp3 / "src11.mp4"
+    generate_sample_video(str(src11), size=(160, 90), duration=0.4, fps=10)
+    async with app8.run_test(size=(110, 40)) as pilot8:
+        app8.query_one("#input_path", Input).value = str(src11)
+        app8.query_one("#hw_encoder", Select).value = "none"
+        await pilot8.pause()
+        await pilot8.press("f7")
+        if not await wait_screen_type(app8, ExportScreen, 10.0):
+            check("导出屏打开", False, "10s 内未打开")
+        else:
+            meta = str(app8.screen.query_one("#export_meta", Static).render())
+            check("导出屏显示编码器", "编码器" in meta, meta)
+    shutil.rmtree(tmp3, ignore_errors=True)
 
 
 async def wait_screen_type(app, screen_cls, timeout_s: float) -> bool:

@@ -225,7 +225,38 @@ def _ancestor_chain(k32, max_levels: int = 10):
     return [(p, table[p][1]) for p in chain_pids[1:]]
 
 
+def _clean_child_env_for_frozen() -> None:
+    """剥离子进程继承的 PyInstaller 运行时库路径（Linux/onefile，v0.5.4）。
+
+    PyInstaller onefile 引导器会设置 LD_LIBRARY_PATH 指向运行时解包目录
+    _MEIxxx 并被所有子进程继承。旧工具链（如 ubuntu-22.04）构建出的包在该
+    目录带有旧版 libstdc++.so.6——系统 ffmpeg 等动态链接程序会因
+    "GLIBCXX_3.4.32 not found" 拒绝启动，导致 AppImage 下 ffbin 自动切换
+    系统 ffmpeg 失败、硬件编码探测全军覆没。应用自身的库在启动时已完成
+    映射，这里只从环境变量里剥掉指向 _MEIPASS 的条目（保留其他路径），
+    影响范围仅限之后拉起的子进程。
+    """
+    if os.name != "nt" and getattr(sys, "frozen", False) \
+            and getattr(sys, "_MEIPASS", None):
+        mei = os.path.abspath(sys._MEIPASS)
+        for var in ("LD_LIBRARY_PATH", "LD_PRELOAD"):
+            val = os.environ.get(var)
+            if not val:
+                continue
+            kept = []
+            for p in val.split(":"):
+                ap = os.path.abspath(p) if p else ""
+                if ap and (ap == mei or ap.startswith(mei + os.sep)):
+                    continue
+                kept.append(p)
+            if kept:
+                os.environ[var] = ":".join(kept)
+            else:
+                os.environ.pop(var, None)
+
+
 def main() -> int:
+    _clean_child_env_for_frozen()
     from PySide6.QtWidgets import QApplication
 
     # TUI 交互模式：GUI 子系统 exe 需先附加控制台；不可用时降级提示

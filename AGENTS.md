@@ -88,6 +88,7 @@
 - GUI 子系统 exe 退出码：PowerShell 须用 `Start-Process -Wait -PassThru` 读 `$p.ExitCode`，`&`/`$LASTEXITCODE` 会得到空值。
 - **构建产物与媒体不入库**：`dist/`、`build/`、`outputs/`、`*.mp4`、`*.png` 等均在 `.gitignore`。产物通过 GitHub Releases 分发。
 - **CI 双平台构建（v0.3.0）**：`.github/workflows/build.yml`，矩阵 `windows-latest` / `ubuntu-22.04`，推 `v*` 标签或手动触发（workflow_dispatch）；构建后跑 `--selftest` 自检，tag 触发时自动创建 Release 附双平台产物。改动 workflow 后须先在分支验证跑通再合并。
+- **AppImage 子进程库污染陷阱（v0.5.4）**：PyInstaller onefile 引导器设置 `LD_LIBRARY_PATH=_MEIxxx` 并被所有子进程继承；旧工具链（CI 的 ubuntu-22.04）构建的包在 `_MEI` 带旧版 `libstdc++.so.6`，系统 ffmpeg 因 GLIBCXX 版本不匹配拒载 → ffbin 静默回退内置（"检测不到编码器"）。`main.py _clean_child_env_for_frozen()` 在冻结启动时剥离指向 `_MEIPASS` 的 `LD_LIBRARY_PATH`/`LD_PRELOAD` 条目。排查此类问题：`VIDEO_WATERMARK_FFBIN_DEBUG=1` 会把 ffbin 决策过程写入 `$TMPDIR/video_watermark_ffbin_debug.log`。
 - 发布：`gh release create vX.Y.Z <产物文件> --title "VideoWatermark vX.Y.Z" --notes "<说明>" --repo illagerCPR/video-watermark`（v0.3.0 起产物含 Windows exe + Linux tar.gz；CI tag 触发时自动发布）。每次用户要求上传即新开一个递增版本号（不覆盖旧标签）。
 
 ## 协作约定
