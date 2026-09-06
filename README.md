@@ -32,26 +32,40 @@
 - **硬件解码**：启用 `-hwaccel auto` 加速解码，驱动不兼容时自动回退软件解码
 - **一键检测**：GUI 内可实时探测当前机器的可用硬件编码器
 - 编码器/解码能力**零新增依赖**（复用内置静态 ffmpeg），打包体积不变
+- ⚠️ 平台差异（v0.3.0 起）：硬件编码器仅 **Windows** 版内置 ffmpeg 提供；Linux 版二进制不含任何硬件编码器，`auto` 会直接回退 libx264（显式指定会按设计报错）
 
 ### 5. ⚡ 并行帧流水线（v0.2.0-rc 起）
 - **单视频导出提速**：读帧 / 合成 / 写入三阶段多线程解耦，1080p 实测约 **2.2 倍**提速
 - **批量并行**：多个视频多进程同时处理，可设置并行数，批量吞吐大幅提升
 - 并行输出与串行输出**字节级一致**，水印渲染效果完全不变
 
+### 6. 🐧 跨平台支持（v0.3.0 起）
+- **Windows 与 Linux 双平台支持**：核心引擎（渲染 / 合成 / 编码 / 音频）行为一致
+- **字体自动适配**：Windows 使用微软雅黑 / 黑体 / 宋体等；Linux 自动递归枚举系统字体（含子目录），默认选用思源黑体（Noto Sans CJK）/ 文泉驿等常见中文字体
+- **一键启动脚本**：Windows `启动.bat`、Linux/macOS `启动.sh`（自动建 venv、装依赖、缺库提示）
+- **CI 双平台构建**：GitHub Actions 自动构建 Windows exe 与 Linux 单文件可执行文件（推 tag 即发布）
+- 注意：Linux 版内置 ffmpeg 未编译硬件编码器，GPU 加速在该平台自动回退 CPU（libx264），功能不受影响
+
 ## 🚀 快速开始
 
 ### 方式一：双击启动（推荐）
-双击项目根目录的 **`启动.bat`**：
 
-- 首次运行会自动创建虚拟环境并安装依赖（含国内镜像自动重试）；
-- 之后每次双击直接打开图形界面。
+- **Windows**：双击项目根目录的 **`启动.bat`**
+- **Linux / macOS**：终端运行 **`./启动.sh`**（或双击执行）
 
-> 要求：本机已安装 **Python 3.10 或更高版本**，并已加入 PATH。
-> 若启动失败，查看项目根目录 `gui_error.log` 定位原因。
+首次运行会自动创建虚拟环境并安装依赖（官方源失败自动换国内镜像），之后每次启动直接打开图形界面。
+
+> 要求：本机已安装 **Python 3.10 或更高版本**。
+> Linux GUI 需要系统图形库（多数桌面发行版自带）；若报 "could not load the Qt platform plugin xcb"，按启动脚本的提示安装 `libxcb-cursor0` 等库即可。
+> Windows 若启动失败，查看项目根目录 `gui_error.log` 定位原因。
 
 ### 方式二：命令行
 ```bat
 .venv\Scripts\python.exe -m app.main
+```
+```bash
+# Linux / macOS
+.venv/bin/python -m app.main
 ```
 
 ### 方式三：命令行无界面（脚本化 / 批量）
@@ -79,6 +93,8 @@ rem GPU 硬件加速（默认 auto 自动选可用硬件编码器，无 GPU 回�
 .venv\Scripts\python.exe -m app.cli --input in.mp4 --output out.mp4 ^
     --parallel 4                               rem 并行流水线 worker 数
 ```
+> Linux / macOS 下将 `.venv\Scripts\python.exe` 换为 `.venv/bin/python`，行继续符 `^` 换为 `\`，注释 `rem` 换为 `#`。
+
 可用参数与默认值见 `app/models.py` 中的 `WatermarkConfig`；`--print-config` 可打印完整配置 JSON。
 GPU 相关：`--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf`、`--hw-codec h264|hevc`、`--no-hw-decode`、`--parallel N`。
 
@@ -118,28 +134,38 @@ app/
    └─ preview.py         # 预览帧渲染、轨迹示意图
 scripts/                 # 演示与测试脚本
 outputs/                 # 生成的样例视频（可作验收）
-启动.bat                 # 双击启动器
+启动.bat                 # Windows 双击启动器
+启动.sh                  # Linux/macOS 启动器
+.github/workflows/       # CI：双平台自动构建与发布
 requirements.txt         # 依赖清单
 ```
 
-## 📦 打包为独立 exe（可选）
+## 📦 打包为独立可执行文件（可选）
 
 无需 Python 环境、双击即用的单文件版本：
 
 ```bat
+rem Windows
 .venv\Scripts\python.exe -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller
 .venv\Scripts\pyinstaller.exe "video_watermark.spec" --noconfirm
 ```
+```bash
+# Linux / macOS
+.venv/bin/pip install pyinstaller
+.venv/bin/pyinstaller "video_watermark.spec" --noconfirm
+```
 
-- 产物：`dist\VideoWatermark.exe`（单文件、无控制台，约 86MB，已内置 ffmpeg 离线可用，含 GPU 硬件加速）
-- 自检：运行 `dist\VideoWatermark.exe --selftest`，退出码 0 表示打包正常；自检包含**打包环境下进程池可用性验证**（批量并行的子进程不会重新弹窗、能正常执行）
+- 产物：Windows `dist\VideoWatermark.exe` / Linux `dist/VideoWatermark`（单文件，约 86~108MB，已内置 ffmpeg 离线可用）
+- 自检：运行产物加 `--selftest`，退出码 0 表示打包正常；自检包含**打包环境下进程池可用性验证**（批量并行的子进程不会重新弹窗、能正常执行）
 - 首次启动解压较慢属正常现象（单文件模式）
 - **批量并行 ≥2 在打包 exe 下正常**：入口已加 `multiprocessing.freeze_support()`（v0.2.0 修复，此前子进程会重复弹出主窗口）
 - **处理过程不再闪命令窗（v0.2.1）**：所有 ffmpeg / explorer 子进程统一走隐藏窗口封装（`CREATE_NO_WINDOW`）
+- **CI 自动构建（v0.3.0 起）**：推送 `v*` 标签或手动触发后，GitHub Actions 自动构建 Windows 与 Linux 双平台产物并发布 Release（见 `.github/workflows/build.yml`）
 
 ## 🧪 测试与验证（9 套）
 
 ```bat
+rem Windows（PowerShell）
 .venv\Scripts\python.exe scripts\smoke_test.py          rem 轨迹/渲染逻辑
 .venv\Scripts\python.exe scripts\verify_step1.py        rem 像素级成品验证
 .venv\Scripts\python.exe scripts\verify_hw.py           rem GPU 硬件加速专项
@@ -152,8 +178,22 @@ requirements.txt         # 依赖清单
 .venv\Scripts\python.exe scripts\step4_batch_test.py    rem 批量端到端（并行+串行，含帧级进度断言）
 .venv\Scripts\python.exe scripts\step1_demo.py          rem 生成 4 种样例输出
 ```
+```bash
+# Linux / macOS
+.venv/bin/python scripts/smoke_test.py
+.venv/bin/python scripts/verify_step1.py
+.venv/bin/python scripts/verify_hw.py
+.venv/bin/python scripts/verify_pipeline.py
+.venv/bin/python scripts/verify_time_range.py
+.venv/bin/python scripts/verify_audio.py
+.venv/bin/python scripts/gui_smoke.py            # 需 QT_QPA_PLATFORM=offscreen（无显示环境时）
+.venv/bin/python scripts/gui_export_test.py      # 同上
+.venv/bin/python scripts/step3_export_test.py    # 同上
+.venv/bin/python scripts/step4_batch_test.py     # 同上
+.venv/bin/python scripts/step1_demo.py
+```
 
-> GPU 硬件加速说明：`verify_hw.py` 会实测本机可用编码器（NVENC/QSV/AMF/MF）逐一编码验证；无 GPU 的机器会自动跳过并回退 CPU 路径，不影响功能。
+> GPU 硬件加速说明：`verify_hw.py` 会实测本机可用编码器（NVENC/QSV/AMF/MF）逐一编码验证；无 GPU 的机器会自动跳过并回退 CPU 路径，不影响功能。Linux 上内置 ffmpeg 无硬件编码器，`verify_hw.py` / `verify_pipeline.py` 中涉及 GPU 编码的断言会失败，属平台预期（其余路径全部通过）。
 
 ## ❓ 常见问题
 
@@ -164,6 +204,9 @@ requirements.txt         # 依赖清单
 - **移动水印在亮背景上看不见**：建议给文字水印加描边（GUI「文字设置 → 描边宽度」），或选择与背景对比强的颜色。
 - **硬件编码没有更快？**：本软件瓶颈在 CPU 侧帧合成/管道而非编码器，GPU 编码主要用于**降低 CPU 负载**与 HEVC 输出；真正的墙钟提速来自内置的并行帧流水线（默认已启用）。若希望更快的单文件导出，可确认「硬件编码」为自动并适当调高 `--parallel`。
 - **提示"硬件编码器不可用"**：说明当前机器无对应 GPU 或驱动缺失，软件已自动回退 CPU 编码（libx264），不影响使用；可在「输出设置 → 检测」查看可用编码器。
+- **Linux 报 "could not load the Qt platform plugin xcb"**：缺系统图形库。Debian/Ubuntu：`sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1`；Fedora：`sudo dnf install xcb-util-cursor libxkbcommon-x11`。无显示环境（服务器）可用 `QT_QPA_PLATFORM=offscreen` 跑 CLI / 自检。
+- **Linux 下硬件加速无效**：属预期——Linux 版内置 ffmpeg 未编译硬件编码器，软件自动回退 CPU 编码；解码仍可用 `-hwaccel auto`（依赖系统驱动，失败自动回退软解）。
+- **Linux 字体下拉为空 / 中文变方框**：确保安装了中文字体（如 `fonts-noto-cjk`、`fonts-wqy-microhei`），软件会自动递归枚举并默认选用可用的中文字体。
 
 ## 📄 许可
 

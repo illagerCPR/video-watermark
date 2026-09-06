@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import functools
 import os
 import sys
 
@@ -33,19 +34,49 @@ FONT_ALIASES = {
     "等线": "Deng.ttf",
     "dengxian": "Deng.ttf",
     "隶书": "SIMLI.TTF",
+    # Linux 常见中文字体
+    "思源黑体": "NotoSansCJK-Regular.ttc",
+    "noto sans cjk sc": "NotoSansCJK-Regular.ttc",
+    "noto sans cjk": "NotoSansCJK-Regular.ttc",
+    "文泉驿微米黑": "wqy-microhei.ttc",
+    "文泉驿正黑": "wqy-zenhei.ttc",
+    "wqy-microhei": "wqy-microhei.ttc",
+    "wqy-zenhei": "wqy-zenhei.ttc",
     "arial": "arial.ttf",
     "times new roman": "times.ttf",
     "courier new": "cour.ttf",
 }
 
-# Windows 常见中文字体候选（按优先级）
+# 部分字体文件的友好显示名（GUI 下拉框 / 默认字体名用，其余显示文件名）
+_FONT_DISPLAY_NAMES = {
+    "msyh.ttc": "微软雅黑",
+    "msyhbd.ttc": "微软雅黑 Bold",
+    "simhei.ttf": "黑体",
+    "simsun.ttc": "宋体",
+    "NotoSansCJK-Regular.ttc": "思源黑体",
+    "NotoSansCJK-Bold.ttc": "思源黑体 Bold",
+    "NotoSansCJKsc-Regular.otf": "思源黑体",
+    "SourceHanSansSC-Regular.otf": "思源黑体",
+    "wqy-microhei.ttc": "文泉驿微米黑",
+    "wqy-zenhei.ttc": "文泉驿正黑",
+    "DroidSansFallbackFull.ttf": "Droid Sans Fallback",
+}
+
+# 默认中文字体候选（按优先级）：Windows 文件平铺在 Fonts 目录，
+# Linux 发行版则放在多层子目录，靠 _font_file_index() 递归索引命中。
 _CJK_CANDIDATES = [
-    "msyh.ttc",      # 微软雅黑
-    "msyhbd.ttc",    # 微软雅黑 Bold
-    "simhei.ttf",    # 黑体
-    "simsun.ttc",    # 宋体
-    "Deng.ttf",      # 等线
-    "simkai.ttf",    # 楷体
+    "msyh.ttc",                   # 微软雅黑（Windows）
+    "msyhbd.ttc",                 # 微软雅黑 Bold（Windows）
+    "simhei.ttf",                 # 黑体（Windows）
+    "simsun.ttc",                 # 宋体（Windows）
+    "Deng.ttf",                   # 等线（Windows）
+    "simkai.ttf",                 # 楷体（Windows）
+    "NotoSansCJK-Regular.ttc",    # 思源黑体（Debian/Ubuntu/openSUSE 等）
+    "NotoSansCJKsc-Regular.otf",  # 思源黑体 SC（部分发行版）
+    "SourceHanSansSC-Regular.otf",  # 思源黑体（Adobe 命名）
+    "wqy-microhei.ttc",           # 文泉驿微米黑
+    "wqy-zenhei.ttc",             # 文泉驿正黑
+    "DroidSansFallbackFull.ttf",  # Android 回退字体（部分发行版）
 ]
 
 
@@ -61,12 +92,32 @@ def _font_dirs() -> list[str]:
     ]
 
 
+@functools.lru_cache(maxsize=1)
+def _font_file_index() -> dict[str, str]:
+    """递归扫描全部字体目录，构建 {小写文件名: 完整路径} 索引。
+
+    Windows 字体平铺在 Fonts 目录，平铺查找即可命中；Linux 的字体则
+    分布在多层子目录（如 /usr/share/fonts/truetype/...），仅扫顶层几乎
+    一无所获，必须递归。索引进程内缓存一次，避免反复 os.walk。
+    """
+    index: dict[str, str] = {}
+    for d in _font_dirs():
+        if not os.path.isdir(d):
+            continue
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                if f.lower().endswith((".ttf", ".ttc", ".otf")):
+                    index.setdefault(f.lower(), os.path.join(root, f))
+    return index
+
+
 def _search_font_file(filename: str) -> str | None:
+    # 先平铺直查（Windows 主路径，零遍历成本），未命中再查递归索引
     for d in _font_dirs():
         p = os.path.join(d, filename)
         if os.path.isfile(p):
             return p
-    return None
+    return _font_file_index().get(filename.lower())
 
 
 def _default_font_name() -> str:
@@ -74,7 +125,7 @@ def _default_font_name() -> str:
     for name in _CJK_CANDIDATES:
         if _search_font_file(name):
             # 返回显示名，方便 GUI 显示
-            return {"msyh.ttc": "微软雅黑"}.get(name, name)
+            return _FONT_DISPLAY_NAMES.get(name, name)
     return ""
 
 
@@ -107,20 +158,12 @@ def list_available_fonts() -> list[str]:
     """返回系统可用字体显示名列表（供 GUI 下拉选择）。"""
     names = list(FONT_ALIASES.keys())
     seen = set(n.lower() for n in names)
-    for d in _font_dirs():
-        if not os.path.isdir(d):
+    index = _font_file_index()
+    for fn in sorted(index):
+        if fn in seen:
             continue
-        try:
-            entries = os.listdir(d)
-        except OSError:
-            continue
-        for e in sorted(entries):
-            if not e.lower().endswith((".ttf", ".ttc", ".otf")):
-                continue
-            if e.lower() in seen:
-                continue
-            seen.add(e.lower())
-            names.append(e)
+        seen.add(fn)
+        names.append(_FONT_DISPLAY_NAMES.get(fn, fn))
     return names
 
 

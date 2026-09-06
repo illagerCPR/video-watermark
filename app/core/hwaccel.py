@@ -1,10 +1,14 @@
 """硬件加速支持：GPU 编码器探测、编码/解码参数生成。
 
-基于内置 imageio-ffmpeg 静态 ffmpeg（v7.1+，自带 NVENC / AMF / QSV / D3D12VA /
-MediaFoundation 硬件编码器，零新增二进制）。本模块负责：
+基于内置 imageio-ffmpeg 静态 ffmpeg。Windows 版二进制（v7.1+）自带
+NVENC / AMF / QSV / D3D12VA / MediaFoundation 硬件编码器；Linux 版
+二进制未编译任何硬件编码器（-encoders 中无 *_nvenc / *_qsv 等），
+因此在 Linux 上探测结果恒为空、auto 模式回退 libx264，属预期行为。
+本模块负责：
 
-- `detect_encoders()`  探测当前机器可用的硬件编码器（对每个候选做一次极短样片
-  实测编码，验证驱动/设备真的可用，结果缓存）；
+- `detect_encoders()`  探测当前机器可用的硬件编码器（先比对 ffmpeg
+  -encoders 名单快速过滤，未编译的候选零成本跳过；再对每个候选做一次
+  极短样片实测编码，验证驱动/设备真的可用，结果缓存）；
 - `resolve_encode()`   把统一的 CRF / 预设语义映射到各硬件编码器的等价参数，
   不可用时自动回退 libx264；
 - `build_decode_input_params()`  硬件解码的 ffmpeg 输入参数。
@@ -20,6 +24,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from typing import Optional
@@ -108,8 +113,9 @@ def _test_encoder(codec_name: str) -> bool:
 def detect_encoders() -> dict[str, tuple[str, ...]]:
     """探测可用硬件编码器。返回 {编码器id: 可用的视频编码元组}。
 
-    结果按 ffmpeg 二进制版本持久化到磁盘（%APPDATA%/VideoWatermark/
-    hw_encoders.json），每台机器只需完整探测一次；驱动或 ffmpeg 升级后
+    结果按 ffmpeg 二进制版本持久化到磁盘（Windows: %APPDATA%/VideoWatermark/
+    hw_encoders.json；Linux/macOS: ~/.config/VideoWatermark/hw_encoders.json），
+    每台机器只需完整探测一次；驱动或 ffmpeg 升级后
     自动失效重测。内存中再叠加 lru_cache，一次会话内多次调用零成本。
     """
     exe = imageio_ffmpeg.get_ffmpeg_exe()
@@ -144,7 +150,11 @@ def _detect_fresh() -> dict[str, tuple[str, ...]]:
 
 
 def _cache_path() -> str:
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    else:
+        base = (os.environ.get("XDG_CONFIG_HOME")
+                or os.path.expanduser("~/.config"))
     return os.path.join(base, "VideoWatermark", "hw_encoders.json")
 
 
