@@ -70,8 +70,12 @@ def build_config(args) -> WatermarkConfig:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="video-watermark", description="视频水印工具（命令行）")
-    p.add_argument("--input", required=True, help="输入视频")
-    p.add_argument("--output", required=True, help="输出视频")
+    p.add_argument("--input", required=False, default=None, help="输入视频"
+                   "（--tui 模式下可省略）")
+    p.add_argument("--output", required=False, default=None, help="输出视频"
+                   "（--tui 模式下可省略）")
+    p.add_argument("--tui", action="store_true",
+                   help="进入 TUI 交互模式（v0.5.0 起；忽略 input/output）")
     p.add_argument("--config", help="JSON 配置（可选）")
     p.add_argument("--mode", choices=["tiled", "motion"], help="平铺 / 移动")
     p.add_argument("--kind", choices=["text", "image"], help="文字 / 图片水印")
@@ -99,6 +103,14 @@ def main(argv=None) -> int:
                         "的二进制，如系统 ffmpeg 或 BtbN 构建；internal=强制内置）")
     p.add_argument("--print-config", action="store_true", help="打印最终配置后退出")
     args = p.parse_args(argv)
+
+    # TUI 交互模式：进入终端全屏界面，忽略 input/output/print-config
+    if args.tui:
+        from .tui import main as tui_main
+        return tui_main()
+
+    if not args.tui and not args.print_config and (not args.input or not args.output):
+        p.error("--input 与 --output 为必填（或使用 --tui 进入交互模式）")
 
     # --ffmpeg 写入环境变量，由 ffbin 解析层统一生效（须在任何 ffmpeg 调用前）
     import os
