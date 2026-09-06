@@ -162,6 +162,26 @@ async def run_tests() -> None:
                     await pilot.pause(0.1)
                 return False
 
+            async def wait_preview_ready(app, want_sketch: bool,
+                                         timeout_s=15.0) -> bool:
+                """等待 PreviewScreen 出现且其子组件 compose 完成。"""
+                for _ in range(int(timeout_s / 0.1)):
+                    if isinstance(app.screen, PreviewScreen):
+                        try:
+                            fr = app.screen.query_one("#preview_frame", Static)
+                            if fr.render() is None:
+                                continue
+                            if want_sketch:
+                                sk = app.screen.query_one("#preview_sketch",
+                                                          Static)
+                                if len(str(sk.render())) <= 20:
+                                    continue
+                            return True
+                        except Exception:  # noqa: BLE001  compose 未完成
+                            pass
+                    await asyncio.sleep(0.1)
+                return False
+
             async def click_scrolled(sel: str):
                 app4.query_one(sel, Button).scroll_visible(animate=False)
                 await pilot.pause(0.3)
@@ -169,19 +189,19 @@ async def run_tests() -> None:
 
             # F6 = 仅轨迹示意（无轨迹区；验证屏幕打开 + 帧渲染）
             await pilot.press("f6")
-            if await wait_screen(app4):
+            if await wait_preview_ready(app4, want_sketch=False):
                 check("轨迹示意预览屏打开", True)
                 check("帧渲染非空",
                       len(str(app4.screen.query_one("#preview_frame", Static).render())) > 100)
                 await pilot.press("escape")
-                await pilot.pause(0.3)
+                await pilot.pause(0.5)
                 check("ESC 返回主屏", not isinstance(app4.screen, PreviewScreen))
             else:
                 check("轨迹示意预览屏打开", False, "15s 内未打开")
 
             # F5 = 帧 + 轨迹
             await pilot.press("f5")
-            if await wait_screen(app4):
+            if await wait_preview_ready(app4, want_sketch=True):
                 check("帧+轨迹预览屏打开", True)
                 st = app4.screen.query_one("#preview_sketch", Static)
                 check("轨迹渲染非空", len(str(st.render())) > 20)

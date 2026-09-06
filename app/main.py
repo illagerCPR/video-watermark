@@ -51,8 +51,52 @@ def _apply_app_icon(app) -> None:
         pass
 
 
+def _setup_tui_console() -> bool:
+    """TUI 模式（--tui）需要终端。Windows GUI 子系统 exe 没有 stdio——
+    尝试附加父进程控制台并重定向标准流；失败（如双击启动）返回 False。
+
+    Linux/macOS 终端天然可用，直接返回 True。
+    """
+    if sys.platform != "win32":
+        return True
+    import ctypes
+
+    k32 = ctypes.windll.kernel32
+    if not k32.GetConsoleWindow():
+        ATTACH_PARENT_PROCESS = -1
+        if not k32.AttachConsole(ATTACH_PARENT_PROCESS):
+            return False
+        # 附加后重定向标准流到该控制台设备
+        try:
+            sys.stdout = open("CONOUT$", "w", encoding="utf-8", closefd=False)
+            sys.stderr = open("CONOUT$", "w", encoding="utf-8", closefd=False)
+            sys.stdin = open("CONIN$", "r", encoding="utf-8", closefd=False)
+        except OSError:
+            return False
+    return True
+
+
 def main() -> int:
     from PySide6.QtWidgets import QApplication
+
+    # TUI 交互模式：GUI 子系统 exe 需先附加控制台；不可用时降级提示
+    if "--tui" in sys.argv:
+        if not _setup_tui_console():
+            try:
+                from PySide6.QtWidgets import QMessageBox
+
+                a = QApplication([])
+                QMessageBox.warning(
+                    None, "TUI 模式",
+                    "TUI 模式需要从终端启动：\n\n"
+                    "  在命令行中运行  VideoWatermark.exe --tui\n\n"
+                    "（双击启动无法显示终端界面，请改用 GUI 或从终端运行）")
+            except Exception:  # noqa: BLE001
+                pass
+            return 2
+        sys.argv.remove("--tui")
+        from app.tui import main as tui_main
+        return tui_main(sys.argv[1:])
 
     # 自检模式：离屏构建主窗口 + 端到端编码验证（打包完整性）
     if "--selftest" in sys.argv:

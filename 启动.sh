@@ -31,7 +31,14 @@ if ! "$VENV/bin/python" -c "import PIL, imageio_ffmpeg, PySide6" >/dev/null 2>&1
         || "$VENV/bin/pip" install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 fi
 
-# 3) 启动 GUI；失败时给出 Linux 常见缺库提示
+# 3) TUI 模式：./启动.sh --tui（终端全屏交互界面，无需图形环境）
+if [ "${1:-}" = "--tui" ] || [ "${1:-}" = "tui" ]; then
+    shift
+    echo "[启动] 视频水印工具（TUI 模式）"
+    exec "$VENV/bin/python" -m app.tui "$@"
+fi
+
+# 4) 启动 GUI；失败时给出 Linux 常见缺库提示
 echo "[启动] 视频水印工具"
 code=0
 "$VENV/bin/python" -m app.main "$@" || code=$?
