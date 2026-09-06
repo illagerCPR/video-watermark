@@ -1,4 +1,4 @@
-"""ffmpeg 可执行文件解析层（v0.3.1 起）。
+"""ffmpeg 可执行文件解析层（v0.3.2 起）。
 
 统一决定全项目使用哪个 ffmpeg 二进制，并经 imageio-ffmpeg 的官方覆写点
 IMAGEIO_FFMPEG_EXE 生效——encoder.py / hwaccel.py 中所有 ffmpeg 取用
