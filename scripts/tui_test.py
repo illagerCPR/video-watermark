@@ -1,26 +1,32 @@
 """TUI 专项测试：Textual Pilot 无终端自动化（离屏，CI 可跑）。
 
 运行：  PYTHONIOENCODING=utf-8 .venv/bin/python scripts/tui_test.py
-覆盖（随里程碑扩展）：
+覆盖：
   1. 应用构建与默认值
-  2. 表单填写 → collect_config() 收集正确
-  3. 「收集为 JSON」按钮 → config_to_json 输出
+  2. fill_from_config → collect_config 全字段往返一致
+  3. 导出参数收集
+  4. 非法值校验（非整数 / 超范围 / 颜色格式）
+  5. --config 预载 + 配置文件保存（JSON 往返）
+  6. 「预览 JSON」按钮
 """
 from __future__ import annotations
 
 import asyncio
 import sys
+import tempfile
+from dataclasses import asdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from textual.widgets import Input, Select, Static  # noqa: E402
+from textual.widgets import Checkbox, Input, Select  # noqa: E402
 
 from app.models import (  # noqa: E402
-    KIND_IMAGE, KIND_TEXT, MODE_MOTION, MODE_TILED, config_to_json,
+    KIND_TEXT, MODE_MOTION, MODE_TILED, TRAJECTORY_CIRCLE,
+    WatermarkConfig, config_to_json, json_to_config,
 )
-from app.tui import WatermarkTuiApp  # noqa: E402
+from app.tui import ConfigError, WatermarkTuiApp  # noqa: E402
 
 failures: list[str] = []
 
@@ -31,42 +37,107 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         failures.append(name)
 
 
+def sample_cfg() -> WatermarkConfig:
+    """覆盖全部字段的有代表性配置。"""
+    return WatermarkConfig(
+        kind=KIND_TEXT, text="机密文件\n第二行", image_path="logo.png",
+        font_name="", font_size=32, text_color=(0, 0, 0), text_opacity=100,
+        stroke_width=2, stroke_color=(255, 0, 0),
+        img_scale=0.4, img_opacity=111, img_radius=8,
+        mode=MODE_MOTION, angle=-45.5, tile_dx=100, tile_dy=50,
+        offset_x=3, offset_y=-4, trajectory=TRAJECTORY_CIRCLE,
+        speed=2.5, motion_scale=0.35, motion_opacity=150, motion_rotate=True,
+        start_sec=1.5, end_sec=8.0,
+    )
+
+
 async def run_tests() -> None:
+    # ---------- 1. 构建与默认值 ----------
     app = WatermarkTuiApp()
-    async with app.run_test(size=(100, 40)) as pilot:
+    async with app.run_test(size=(110, 48)) as pilot:
         print("== 1. 应用构建与默认值 ==")
-        check("应用标题正确", app.TITLE == "视频水印工具 · TUI")
         check("默认模式为平铺", app.query_one("#mode", Select).value == MODE_TILED)
         check("默认来源为文字", app.query_one("#kind", Select).value == KIND_TEXT)
+        check("字号默认 48", app.query_one("#font_size", Input).value == "48")
+        check("轨迹默认水平",
+              app.query_one("#trajectory", Select).value == "horizontal")
 
-        print("== 2. 表单收集 ==")
-        app.query_one("#input_path", Input).value = "in.mp4"
-        app.query_one("#output_path", Input).value = "out.mp4"
-        app.query_one("#text", Input).value = "机密文件"
-        app.query_one("#mode", Select).value = MODE_MOTION
-        app.query_one("#kind", Select).value = KIND_TEXT
-        await pilot.pause()
-        cfg = app.collect_config()
-        check("收集 mode=移动", cfg.mode == MODE_MOTION)
-        check("收集 kind=文字", cfg.kind == KIND_TEXT)
-        check("收集 text", cfg.text == "机密文件")
-        check("未填字段取默认值", abs(cfg.angle - 30.0) < 1e-6)  # dataclass 默认
+        # ---------- 2. 全字段往返 ----------
+        print("== 2. fill_from_config → collect_config 往返 ==")
+        cfg = sample_cfg()
+        app.fill_from_config(cfg)
+        got = app.collect_config()
+        check("全字段往返一致", asdict(got) == asdict(cfg))
+        if asdict(got) != asdict(cfg):
+            for k in asdict(cfg):
+                if asdict(got)[k] != asdict(cfg)[k]:
+                    print(f"    差异字段 {k}: {asdict(got)[k]!r} != {asdict(cfg)[k]!r}")
 
-        print("== 3. 收集为 JSON ==")
-        await pilot.click("#collect")
-        await pilot.pause(0.5)  # 按钮按压动画周期需较长 pause，短 pause 会丢消息
-        j = app.last_json
-        check("按钮触发 JSON 生成", bool(j))
-        check("JSON 含模式与文字", '"mode"' in j and '"text"' in j)
-        check("JSON 输出为合法序列化", '"angle"' in j)
+        # ---------- 3. 导出参数 ----------
+        print("== 3. collect_export_params ==")
+        params = app.collect_export_params()
+        check("导出参数默认值", params == {
+            "crf": 23, "preset": "medium", "scale": 1.0,
+            "hw_encoder": "auto", "hw_codec": "h264",
+            "hw_decode": True, "parallel": 0}, str(params))
+        app.query_one("#crf", Input).value = "20"
+        app.query_one("#scale", Input).value = "0.5"
+        app.query_one("#parallel", Input).value = "4"
+        params = app.collect_export_params()
+        check("导出参数收集", params["crf"] == 20 and params["scale"] == 0.5
+              and params["parallel"] == 4, str(params))
 
-        # 恢复后再点一次（验证可重复收集）
-        app.query_one("#mode", Select).value = MODE_TILED
-        await pilot.pause()
-        await pilot.click("#collect")
+        # ---------- 4. 非法值校验 ----------
+        print("== 4. 非法值校验 ==")
+        for wid, bad, expect in (
+            ("font_size", "abc", "整数"),
+            ("angle", "200", "180"),
+            ("text_color", "999,0,0", "0~255"),
+            ("text_color", "255,0", "R,G,B"),
+            ("end_sec", "abc", "数字或留空"),
+        ):
+            app.fill_from_config(sample_cfg())
+            app.query_one(f"#{wid}", Input).value = bad
+            try:
+                app.collect_config()
+                check(f"非法值 {wid}={bad!r} 报错", False, "未抛 ConfigError")
+            except ConfigError as exc:
+                check(f"非法值 {wid}={bad!r} 报错", expect in str(exc), str(exc)[:40])
+
+        # ---------- 5. 配置文件预载 + 保存 ----------
+        print("== 5. 配置文件预载 + 保存 ==")
+        tmp = Path(tempfile.mkdtemp())
+        cfg_path = tmp / "cfg.json"
+        cfg_path.write_text(config_to_json(sample_cfg()), encoding="utf-8")
+        app2 = WatermarkTuiApp(config_path=str(cfg_path))
+        async with app2.run_test(size=(110, 48)):
+            got = app2.collect_config()
+            check("--config 预载往返一致", asdict(got) == asdict(sample_cfg()))
+            app2.query_one("#config_path", Input).value = str(tmp / "saved.json")
+            app2._save_config()
+            saved = Path(tmp / "saved.json").read_text(encoding="utf-8")
+            check("保存后 JSON 往返一致",
+                  asdict(json_to_config(saved)) == asdict(sample_cfg()))
+
+    # ---------- 6. 预览 JSON 按钮（新实例，避免上段状态干扰） ----------
+    from textual.widgets import Button
+    app3 = WatermarkTuiApp()
+    async with app3.run_test(size=(110, 48)) as pilot:
+        print("== 6. 预览 JSON 按钮 ==")
+        btn = app3.query_one("#preview_json", Button)
+        btn.scroll_visible(animate=False)
+        await pilot.pause(0.3)
+        await pilot.click("#preview_json")
         await pilot.pause(0.5)
-        check("重复收集一致", '"mode": "tiled"' in app.last_json,
-              [l.strip() for l in app.last_json.splitlines() if "mode" in l][:1])
+        check("按钮触发 JSON 生成", bool(app3.last_json))
+        check("JSON 含 mode/angle", '"mode": "tiled"' in app3.last_json
+              and '"angle": 30.0' in app3.last_json)
+        # 非法值时按钮不生成 JSON 而是提示
+        app3.last_json = ""
+        app3.query_one("#font_size", Input).value = "abc"
+        await pilot.click("#preview_json")
+        await pilot.pause(0.5)
+        check("非法值时按钮不生成", app3.last_json == "")
 
 
 def main() -> int:
