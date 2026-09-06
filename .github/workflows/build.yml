@@ -25,9 +25,9 @@ jobs:
           - os: ubuntu-22.04 # 用 22.04 构建以获得更宽的 glibc 兼容范围
             artifact: VideoWatermark-linux-x86_64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -69,7 +69,7 @@ jobs:
         shell: pwsh
         run: Copy-Item "dist\VideoWatermark.exe" "VideoWatermark-windows-x86_64.exe"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: VideoWatermark-*-x86_64.*
@@ -83,7 +83,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: dist
