@@ -132,6 +132,7 @@ app/
    ├─ motion.py          # 6 种轨迹计算
    ├─ compositor.py      # 逐帧合成（含时间范围、自转）
    ├─ hwaccel.py         # GPU 硬件编码器探测、参数映射、硬件解码
+   ├─ ffbin.py           # ffmpeg 二进制解析层（内置/系统/显式指定，v0.3.1 起）
    ├─ encoder.py         # ffmpeg 读写与编码（含并行帧流水线）
    └─ preview.py         # 预览帧渲染、轨迹示意图
 scripts/                 # 演示与测试脚本

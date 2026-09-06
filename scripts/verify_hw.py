@@ -57,8 +57,14 @@ def main() -> int:
     print("== 1. 探测可用硬件编码器 ==")
     avail = hwaccel.detect_encoders()
     print("   ", avail)
-    check("探测结果含 nvenc（本机为 RTX 4050）",
-          "nvenc" in avail and "h264" in avail.get("nvenc", ()), f"{avail}")
+    if avail:
+        check("探测到可用硬件编码器", True,
+              ", ".join(f"{k}({','.join(v)})" for k, v in avail.items()))
+    else:
+        # 无硬件编码器（无 GPU / 驱动缺失 / 内置二进制不带硬件编码器且
+        # 系统ffmpeg 也没有）：GPU 路径无从测起，按 SKIP 处理不算失败。
+        print("    [SKIP] 未检测到可用硬件编码器（无 GPU/驱动或二进制不含"
+              "硬件编码器）——GPU 实跑项跳过，仅验证回退路径")
 
     print("== 2. auto 模式（应选中硬件编码器或回退 libx264）==")
     s = process(str(SAMPLE), str(OUT / "hw_auto.mp4"), cfg,
@@ -82,7 +88,10 @@ def main() -> int:
               f"codec={st.get('codec')}")
         check(f"{eid}/{vc} 音频保留", has_audio(out))
         ran += 1
-    check("至少一个硬件编码器实跑成功", ran >= 1, f"实跑 {ran} 个")
+    if avail:
+        check("至少一个硬件编码器实跑成功", ran >= 1, f"实跑 {ran} 个")
+    else:
+        print("    [SKIP] 无可用硬件编码器，实跑项整体跳过")
 
     print("== 4. 显式指定不可用编码器应报错 ==")
     unavailable = next((e for e in ("nvenc", "qsv", "amf", "d3d12va", "mf")
