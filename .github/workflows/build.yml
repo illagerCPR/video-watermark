@@ -64,6 +64,15 @@ jobs:
         if: runner.os == 'Linux'
         run: tar -czf "VideoWatermark-linux-x86_64.tar.gz" -C dist VideoWatermark
 
+      - name: Package (Linux AppImage)
+        if: runner.os == 'Linux'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          bash scripts/build_appimage.sh
+          # 无 FUSE 环境：APPIMAGE_EXTRACT_AND_RUN 让 runtime 自动解包运行
+          APPIMAGE_EXTRACT_AND_RUN=1 ./VideoWatermark-linux-x86_64.AppImage --selftest
+
       - name: Package (Windows rename)
         if: runner.os == 'Windows'
         shell: pwsh

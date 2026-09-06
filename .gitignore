@@ -19,6 +19,10 @@ build/
 dist/
 *.spec.bak
 
+# AppImage 构建产物
+AppDir/
+*.AppImage
+
 # 运行时日志
 *.log
 gui_error.log
