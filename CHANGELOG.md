@@ -2,15 +2,16 @@
 
 本项目所有显著变更记录于此。格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本（`vX.Y.Z`，发版即打 tag，不覆盖旧标签）。
 
-## [Unreleased]
+## [v0.4.0] - 2026-09-06
 
-### 新增（v0.4.0 进行中）
+### 新增
 - **GUI ffmpeg 二进制来源设置**：输出设置区可选「自动（推荐）/ 内置二进制 / 自定义路径」，QSettings 持久化；切换即时生效于下次生成/检测
 - **「检测」结果增强**：同时显示当前实际使用的 ffmpeg 二进制与来源；Linux 未检测到硬件编码器时提示安装系统 ffmpeg
-- **Linux AppImage 产物**（批次 C 进行中）
+- **Linux AppImage 产物**：`scripts/build_appimage.sh`（AppDir/AppRun/desktop/图标），CI 自动打包并以 `--selftest` 验证，无 FUSE 环境自动解包运行；Release 产物扩为 exe / tar.gz / AppImage 三件套
 
-### 计划中
-- VAAPI 硬件编码（AMD Linux）——见 README「已知限制」
+### 变更
+- CI actions 升级（checkout v7 / setup-python v7 / artifact v7、v8），消除 Node 20 弃用警告
+- 新增 `CHANGELOG.md`；README 新增「已知限制」（VAAPI 暂不支持等）
 
 ## [v0.3.2] - 2026-09-06
 
@@ -80,7 +81,8 @@
 ### 新增
 - 首个可用版本（Windows 64 位单文件版）：全屏平铺文字/图片水印（角度/多行）、移动水印（6 种轨迹）、实时预览、批量处理、命令行入口、独立 exe 打包
 
-[Unreleased]: https://github.com/illagerCPR/video-watermark/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/illagerCPR/video-watermark/compare/v0.4.0...HEAD
+[v0.4.0]: https://github.com/illagerCPR/video-watermark/compare/v0.3.2...v0.4.0
 [v0.3.2]: https://github.com/illagerCPR/video-watermark/compare/v0.3.0...v0.3.2
 [v0.3.0]: https://github.com/illagerCPR/video-watermark/compare/v0.2.2...v0.3.0
 [v0.2.2]: https://github.com/illagerCPR/video-watermark/compare/v0.2.1...v0.2.2
