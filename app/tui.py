@@ -15,7 +15,9 @@ import json
 import sys
 from pathlib import Path
 
+from textual import work
 from textual.app import App, ComposeResult
+from textual.screen import ModalScreen
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Checkbox, Footer, Header, Input, Select, Static, TextArea
 
@@ -45,6 +47,31 @@ class ConfigError(ValueError):
     """表单值不合法（collect_config 抛出，GUI 侧转提示）。"""
 
 
+class PreviewScreen(ModalScreen):
+    """预览屏：合成水印后的视频帧 + 轨迹示意（半块像素渲染）。"""
+
+    BINDINGS = [("escape", "app.pop_screen", "返回"), ("f5", "app.pop_screen", "返回")]
+
+    def __init__(self, frame_text, sketch_text) -> None:
+        super().__init__()
+        self._frame_text = frame_text
+        self._sketch_text = sketch_text
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="preview_body"):
+            yield Static("视频帧预览（含水印）", classes="section")
+            yield Static(self._frame_text, id="preview_frame")
+            if self._sketch_text is not None:
+                yield Static("移动轨迹示意", classes="section")
+                yield Static(self._sketch_text, id="preview_sketch")
+        yield Footer()
+
+    def update_content(self, frame_text, sketch_text) -> None:
+        self.query_one("#preview_frame", Static).update(frame_text)
+        if sketch_text is not None:
+            self.query_one("#preview_sketch", Static).update(sketch_text)
+
+
 class WatermarkTuiApp(App[None]):
     """视频水印 TUI 主应用。"""
 
@@ -52,7 +79,7 @@ class WatermarkTuiApp(App[None]):
     SUB_TITLE = "v0.5.0-dev"
 
     CSS = """
-    #form { height: auto; padding: 0 1; }
+    #form { height: 1fr; padding: 0 1; } /* 1fr=滚动视口：长表单内部滚动，勿改 auto（会溢出屏幕） */
     .section { color: $text-muted; text-style: bold; margin-top: 1; }
     Input, Select { margin-bottom: 0; }
     TextArea { height: 5; margin-bottom: 0; }
@@ -63,9 +90,13 @@ class WatermarkTuiApp(App[None]):
         padding: 0 1;
         color: $text-muted;
     }
+    PreviewScreen #preview_body { height: 1fr; }
+    PreviewScreen Static { margin-bottom: 0; }
     """
 
-    BINDINGS = [("ctrl+q", "quit", "退出"), ("ctrl+s", "save_config", "保存配置")]
+    BINDINGS = [("ctrl+q", "quit", "退出"), ("ctrl+s", "save_config", "保存配置"),
+                ("f5", "preview_frame", "预览帧"),
+                ("f6", "preview_sketch", "轨迹示意")]
 
     def __init__(self, config_path: str | None = None) -> None:
         super().__init__()
@@ -117,6 +148,12 @@ class WatermarkTuiApp(App[None]):
             yield Static("出现时间范围（秒，结束留空 = 直到结尾）", classes="section")
             yield Input(value="0.0", id="start_sec")
             yield Input(placeholder="（空 = 直到结尾）", id="end_sec")
+
+            yield Static("预览（需先填输入视频）", classes="section")
+            with Horizontal():
+                yield Input(value="1.0", id="preview_time")
+                yield Button("预览帧 (F5)", id="preview_frame")
+                yield Button("轨迹示意 (F6)", id="preview_sketch")
 
             yield Static("输出与编码", classes="section")
             yield Input(value="23", id="crf")
@@ -322,9 +359,58 @@ class WatermarkTuiApp(App[None]):
             self._load_config()
         elif event.button.id == "save_config":
             self._save_config()
+        elif event.button.id == "preview_frame":
+            self._open_preview()
+        elif event.button.id == "preview_sketch":
+            self._open_preview(with_sketch=False)
+
+    # ------------------------------------------------------------------
+    # 预览（M3：半块像素渲染，后台线程抽帧避免卡 UI）
+    # ------------------------------------------------------------------
+    def _open_preview(self, with_sketch: bool = True) -> None:
+        video = self.query_one("#input_path", Input).value.strip()
+        if not video:
+            self.notify("请先填写输入视频路径", severity="warning")
+            return
+        if not Path(video).is_file():
+            self.notify(f"输入视频不存在：{video}", severity="error")
+            return
+        try:
+            cfg = self.collect_config()
+            t = self._float("preview_time", "预览时间点", 0)
+        except ConfigError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        self._render_preview_worker(video, cfg, t, with_sketch)
+
+    @work(thread=True, exclusive=True, group="preview")
+    def _render_preview_worker(self, video: str, cfg: WatermarkConfig,
+                               t: float, with_sketch: bool) -> None:
+        from . import tui_preview
+        try:
+            frame_text = tui_preview.image_to_half_blocks(
+                tui_preview.grab_composited_frame(video, cfg, t))
+            sketch_text = (tui_preview.image_to_half_blocks(
+                tui_preview.sketch(cfg), max_rows=25) if with_sketch else None)
+        except Exception as exc:  # noqa: BLE001
+            self.call_from_thread(self.notify, f"预览失败：{exc}", severity="error")
+            return
+        self.call_from_thread(self._show_preview_screen, frame_text, sketch_text)
+
+    def _show_preview_screen(self, frame_text, sketch_text) -> None:
+        if not isinstance(self.screen, PreviewScreen):
+            self.push_screen(PreviewScreen(frame_text, sketch_text))
+        else:
+            self.screen.update_content(frame_text, sketch_text)
 
     def action_save_config(self) -> None:
         self._save_config()
+
+    def action_preview_frame(self) -> None:
+        self._open_preview()
+
+    def action_preview_sketch(self) -> None:
+        self._open_preview(with_sketch=False)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from textual.widgets import Checkbox, Input, Select  # noqa: E402
+from textual.widgets import Checkbox, Input, Select, Static  # noqa: E402
 
 from app.models import (  # noqa: E402
     KIND_TEXT, MODE_MOTION, MODE_TILED, TRAJECTORY_CIRCLE,
@@ -135,9 +135,60 @@ async def run_tests() -> None:
         # 非法值时按钮不生成 JSON 而是提示
         app3.last_json = ""
         app3.query_one("#font_size", Input).value = "abc"
+        btn.scroll_visible(animate=False)
+        await pilot.pause(0.3)
         await pilot.click("#preview_json")
         await pilot.pause(0.5)
         check("非法值时按钮不生成", app3.last_json == "")
+
+
+    # ---------- 7. 预览（帧 + 轨迹，需样片） ----------
+    from textual.widgets import Button
+    from app.tui import PreviewScreen
+    sample = ROOT / "outputs" / "sample_video.mp4"
+    if not sample.is_file():
+        print("== 7. 预览：跳过（缺 outputs/sample_video.mp4，先跑 step1_demo.py）==")
+    else:
+        print("== 7. 预览（半块像素：帧 + 轨迹） ==")
+        app4 = WatermarkTuiApp(config_path=str(cfg_path))
+        async with app4.run_test(size=(110, 48)) as pilot:
+            app4.query_one("#input_path", Input).value = str(sample)
+            await pilot.pause()
+
+            async def wait_screen(app, timeout_s=15.0):
+                for _ in range(int(timeout_s / 0.1)):
+                    if isinstance(app.screen, PreviewScreen):
+                        return True
+                    await pilot.pause(0.1)
+                return False
+
+            async def click_scrolled(sel: str):
+                app4.query_one(sel, Button).scroll_visible(animate=False)
+                await pilot.pause(0.3)
+                await pilot.click(sel)
+
+            # F6 = 仅轨迹示意（无轨迹区；验证屏幕打开 + 帧渲染）
+            await pilot.press("f6")
+            if await wait_screen(app4):
+                check("轨迹示意预览屏打开", True)
+                check("帧渲染非空",
+                      len(str(app4.screen.query_one("#preview_frame", Static).render())) > 100)
+                await pilot.press("escape")
+                await pilot.pause(0.3)
+                check("ESC 返回主屏", not isinstance(app4.screen, PreviewScreen))
+            else:
+                check("轨迹示意预览屏打开", False, "15s 内未打开")
+
+            # F5 = 帧 + 轨迹
+            await pilot.press("f5")
+            if await wait_screen(app4):
+                check("帧+轨迹预览屏打开", True)
+                st = app4.screen.query_one("#preview_sketch", Static)
+                check("轨迹渲染非空", len(str(st.render())) > 20)
+                check("帧渲染非空",
+                      len(str(app4.screen.query_one("#preview_frame", Static).render())) > 100)
+            else:
+                check("帧+轨迹预览屏打开", False, "15s 内未打开")
 
 
 def main() -> int:
