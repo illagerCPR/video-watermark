@@ -53,6 +53,7 @@
 - 内置 ffmpeg v7.1（Windows 版）自带 `h264/hevc/av1_nvenc`、`h264/hevc_qsv`、`h264/hevc_amf`、`hevc_d3d12va`、`h264/hevc_mf`，**零新增依赖/二进制**；打包不受影响。
 - **Linux 版内置 ffmpeg 未编译任何硬件编码器**（`-encoders` 中无 `*_nvenc/_qsv/_amf/_d3d12va/_mf`，v0.3.0 实测）：v0.3.2 起 `ffbin.py` 会在此场景**自动探测系统 ffmpeg**，若其带硬件编码器则切换使用（探测缓存键含二进制路径，切换自动失效重测）；无系统 ffmpeg 或其也无硬件编码器时维持内置，`auto` 回退 libx264。
 - 探测结果缓存路径：Windows `%APPDATA%/VideoWatermark/`；Linux/macOS `~/.config/VideoWatermark/`（XDG_CONFIG_HOME 优先）。
+- **硬件解码器报告（v0.5.3）**：`hwaccel.hw_decoder_names()`（-decoders 具名硬件解码器）+ `_hwaccel_methods()`（-hwaccels 方法，VAAPI/CUDA 无具名解码器、不解析会漏报 AMD/Intel）→ `hw_decoder_summary()` 并入 `describe_available()`；只报告已编译项不实测（导出时 `-hwaccel auto` 自动协商、失败回退软解）。切换二进制后与 `detect_encoders` 一起 `cache_clear()`。
 - `process(...)` 新增参数：`hw_encoder="auto"`（auto/none/nvenc/qsv/amf/d3d12va/mf）、`hw_codec="h264"`、`hw_decode=True`（`-hwaccel auto`，头部解析失败自动回退软解）。返回 dict 新增 `codec` 键。
 - `write_frames(...)` 必须传 `quality=None`：否则非 libx264 编码器会被追加 `-qscale:v`（旧代码隐式叠加 `-crf 25` 只是被后置参数覆盖）。
 - 显式指定不可用编码器会 `raise RuntimeError`（不静默回退）；`auto` 才静默回退 libx264。

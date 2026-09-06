@@ -2,6 +2,16 @@
 
 本项目所有显著变更记录于此。格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本（`vX.Y.Z`，发版即打 tag，不覆盖旧标签）。
 
+## [v0.5.3] - 2026-09-06
+
+### 修复
+- **Linux「检测」不报告硬件解码器**：检测输出此前只包含硬件**编码器**（实测），用户装好系统 ffmpeg 后仍看不到任何解码器信息。现「检测」结果新增**硬件解码器**报告。
+
+### 新增
+- `hwaccel.hw_decoder_names()` / `hw_decoder_summary()`：解析当前二进制的 `-decoders` 具名硬件解码器（`*_cuvid`/`*_qsv`/`*_mf`/`*_d3d11va`/`*_d3d12va`）并合并 `-hwaccels` 硬件加速方法（VAAPI/CUDA/VideoToolbox/VDPAU 无具名解码器，不解析会漏报 AMD/Intel）；按族归并显示（如 "NVIDIA NVDEC（av1/h264/hevc…）、Intel QSV（…）、VAAPI"）。只报告已编译项、不逐个实测——硬解由导出时 `-hwaccel auto` 自动协商，失败自动回退软件解码
+- Linux 未检测到硬件编码器时的提示补充说明 VAAPI 编码暂不支持
+- GUI 切换 ffmpeg 二进制来源时同步失效解码器探测缓存
+
 ## [v0.5.2] - 2026-09-06
 
 ### 修复

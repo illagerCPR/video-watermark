@@ -45,7 +45,7 @@
 - **一键启动脚本**：Windows `启动.bat`、Linux/macOS `启动.sh`（自动建 venv、装依赖、缺库提示）
 - **CI 双平台构建**：GitHub Actions 自动构建 Windows exe 与 Linux 单文件可执行文件（推 tag 即发布）
 - **ffmpeg 二进制解析层（v0.3.2 起）**：优先用内置二进制（零依赖）；Linux 上内置版无硬件编码器时自动探测并切换到带硬件编码器的系统 ffmpeg；支持 `--ffmpeg` 显式指定与环境变量 `VIDEO_WATERMARK_FFMPEG` 覆盖
-- **GUI 二进制来源设置（v0.4.0 起）**：输出设置区可选 ffmpeg 二进制来源（自动（推荐）/ 内置二进制 / 自定义路径），QSettings 持久化，切换后下次生成/检测生效；「检测」结果同时显示当前实际使用的二进制与来源
+- **GUI 二进制来源设置（v0.4.0 起）**：输出设置区可选 ffmpeg 二进制来源（自动（推荐）/ 内置二进制 / 自定义路径），QSettings 持久化，切换后下次生成/检测生效；「检测」结果同时显示当前实际使用的二进制与来源、硬件**编码器**（逐个实测）与硬件**解码器**列表（v0.5.3 起，含 VAAPI/CUDA 等硬件加速方法）
 
 ### 7. ⌨️ TUI 交互模式（v0.5.0 起）
 - **终端全屏界面**：像 GUI 一样交互式配置全部水印参数（22 个字段 + 编码参数），无需记忆命令行
@@ -239,6 +239,7 @@ rem Windows（PowerShell）
 - **Linux 字体下拉为空 / 中文变方框**：确保安装了中文字体（如 `fonts-noto-cjk`、`fonts-wqy-microhei`），软件会自动递归枚举并默认选用可用的中文字体。
 - **Windows Terminal 里运行 `VideoWatermark.exe --tui` 弹"请从命令行启动"提示**：v0.5.1 已修复（此前控制台附加逻辑在 Windows Terminal 的 ConPTY 环境下失效）。若双击启动（无控制台），仍会提示后退出（退出码 2），属预期；排查可设 `VIDEO_WATERMARK_TUI_DEBUG=1` 看判定日志。
 - **Windows 运行 `VideoWatermark.exe --tui` 进得去界面但按键无响应（v0.5.2）**：cmd/PowerShell 启动 GUI 程序时不等待其退出，shell 继续读取控制台输入、与 TUI 抢键。改用同目录的 **`VideoWatermarkTUI.exe`** 启动（控制台程序，shell 会等待它，TUI 独占键盘）；或在 cmd 中 `start /wait VideoWatermark.exe --tui`。`python -m app.tui` / `启动-tui.bat` 不受影响。
+- **Linux 装了系统 ffmpeg 仍检测不到硬件编解码器**：①「检测」结果里**编码器**需实测可用——NVIDIA 需驱动（WSL2 需驱动直通），AMD/Intel 的 VAAPI **编码**暂不支持（回退 CPU，见已知限制）；②**解码器**自 v0.5.3 起会列出（NVIDIA NVDEC / Intel QSV / VAAPI 等），硬解在导出时自动协商、失败自动回退软解；③若应用在安装系统 ffmpeg **之前**就已启动，请重启应用再点「检测」（二进制解析与探测结果有缓存）。
 
 ## ⚠️ 已知限制
 

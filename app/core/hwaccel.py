@@ -188,12 +188,103 @@ def describe_available() -> str:
         if not sys.platform.startswith("win"):
             msg += ("\nLinux 可安装系统 ffmpeg 启用 GPU 编码"
                     "（sudo apt install ffmpeg），软件会自动切换使用")
-        return msg
+            msg += "；AMD/Intel 的 VAAPI 编码暂不支持（见 README 已知限制）"
+    else:
+        parts = []
+        for eid in _AUTO_ORDER:
+            if eid in avail:
+                parts.append(f"{ENC_IDS[eid].name}（{'/'.join(avail[eid])}）")
+        msg = "检测到可用硬件编码器：" + "、".join(parts)
+    # 硬件解码器（v0.5.3）：此前检测输出只报告编码器
+    msg += f"\n硬件解码器：{hw_decoder_summary()}"
+    msg += "\n（导出时 -hwaccel auto 自动协商硬解，失败自动回退软件解码）"
+    return msg
+
+
+# 硬件解码器族：解码器名后缀 -> 显示名（h264_cuvid / hevc_qsv / h264_vaapi …）
+_DEC_FAMILY_NAMES = {
+    "cuvid": "NVIDIA NVDEC", "nvdec": "NVIDIA NVDEC",
+    "qsv": "Intel QSV", "vaapi": "VAAPI",
+    "mf": "MediaFoundation", "d3d11va": "D3D11VA", "d3d12va": "D3D12VA",
+    "mediacodec": "MediaCodec",
+}
+# -hwaccels 方法（VAAPI/CUDA 等解码走 hwaccel 机制、没有独立的 *_vaapi 解码器名，
+# 只看 -decoders 会漏报 AMD/Intel）-> 显示名
+_HWACCEL_METHOD_NAMES = {
+    "cuda": "NVIDIA NVDEC", "qsv": "Intel QSV", "vaapi": "VAAPI",
+    "d3d11va": "D3D11VA", "d3d12va": "D3D12VA",
+    "mediacodec": "MediaCodec", "videotoolbox": "VideoToolbox",
+    "vdpau": "VDPAU",
+}
+# 摘要输出顺序
+_DEC_FAMILY_ORDER = ("NVIDIA NVDEC", "Intel QSV", "VAAPI", "MediaFoundation",
+                     "D3D11VA", "D3D12VA", "VideoToolbox", "VDPAU",
+                     "MediaCodec")
+
+
+@functools.lru_cache(maxsize=1)
+def hw_decoder_names() -> tuple[str, ...]:
+    """当前 ffmpeg 二进制已编译的硬件解码器名集合（排序去重）。
+
+    只解析 -decoders 名单、不逐个实测：导出时的硬件解码由 -hwaccel auto
+    自动协商（失败自动回退软解），这里负责把"有哪些"报告给用户。
+    切换 ffmpeg 二进制后须 cache_clear()（同 detect_encoders）。
+    """
+    exe = ffbin.get_ffmpeg_exe()
+    try:
+        r = run_hidden([exe, "-hide_banner", "-decoders"],
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=60)
+    except Exception:  # noqa: BLE001
+        return ()
+    names: list[str] = []
+    for line in r.stdout.splitlines():
+        m = re.match(r"\s*\S+\s+(\S+)", line)  # 第二列为解码器名
+        if m and m.group(1).endswith(tuple(_DEC_FAMILY_NAMES)):
+            names.append(m.group(1))
+    return tuple(sorted(set(names)))
+
+
+def _hwaccel_methods() -> set[str]:
+    """-hwaccels 列出的硬件加速方法（cuda/vaapi/qsv/…，均为已编译项）。"""
+    exe = ffbin.get_ffmpeg_exe()
+    try:
+        r = run_hidden([exe, "-hide_banner", "-hwaccels"],
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=60)
+    except Exception:  # noqa: BLE001
+        return set()
+    out: set[str] = set()
+    for line in r.stdout.splitlines():
+        s = line.strip()
+        if s and " " not in s and s in _HWACCEL_METHOD_NAMES:
+            out.add(s)
+    return out
+
+
+def hw_decoder_summary() -> str:
+    """按解码器族归并的人类可读摘要（检测输出用）。
+
+    合并两个来源：*-cuvid/_qsv/… 具名硬件解码器 + -hwaccels 方法
+    （VAAPI/CUDA 等无具名解码器，靠方法名补充，避免漏报 AMD/Intel）。
+    """
+    fams: dict[str, set[str]] = {}
+    for n in hw_decoder_names():
+        base, _, suf = n.rpartition("_")
+        fam = _DEC_FAMILY_NAMES.get(suf)
+        if fam:
+            fams.setdefault(fam, set()).add(base)
+    for m in _hwaccel_methods():
+        fams.setdefault(_HWACCEL_METHOD_NAMES[m], set())
+    if not fams:
+        return "无（将使用软件解码）"
     parts = []
-    for eid in _AUTO_ORDER:
-        if eid in avail:
-            parts.append(f"{ENC_IDS[eid].name}（{'/'.join(avail[eid])}）")
-    return "检测到可用硬件编码器：" + "、".join(parts)
+    for fam in _DEC_FAMILY_ORDER:
+        if fam not in fams:
+            continue
+        codecs = sorted(fams[fam])
+        parts.append(f"{fam}（{'/'.join(codecs)}）" if codecs else fam)
+    return "、".join(parts)
 
 
 # ---------------------------------------------------------------------------

@@ -144,6 +144,8 @@ _btn = next(b for b in win.findChildren(QPushButton)
             if b.text() == "检测")
 check("详情行不与按钮行重叠",
       _detail.geometry().top() >= _btn.geometry().bottom() - 1)
+check("检测输出含硬件解码器报告（v0.5.3）",
+      "硬件解码器" in _detail.text())
 
 print("\n" + ("全部通过" if not failures else f"失败 {len(failures)} 项: {failures}"))
 sys.exit(1 if failures else 0)

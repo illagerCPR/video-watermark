@@ -689,6 +689,7 @@ class MainWindow(QMainWindow):
         ffbin.reset()
         from ..core import hwaccel as _hw
         _hw.detect_encoders.cache_clear()
+        _hw.hw_decoder_names.cache_clear()
 
     def _on_ff_mode_changed(self):
         mode = self.ff_combo.currentData()
