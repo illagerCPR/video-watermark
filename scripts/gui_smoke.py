@@ -84,5 +84,36 @@ from app.models import config_to_json
 j = config_to_json(win._cfg_from_ui())
 check("配置可序列化", '"trajectory"' in j)
 
+print("== 7. ffmpeg 二进制设置（QSettings 持久化） ==")
+from PySide6.QtCore import QSettings  # noqa: E402
+
+check("设置下拉含 3 个模式", win.ff_combo.count() == 3
+      and win.ff_combo.itemData(0) == "auto"
+      and win.ff_combo.itemData(1) == "internal"
+      and win.ff_combo.itemData(2) == "custom")
+check("默认模式为自动", win.ff_combo.currentData() == "auto")
+check("默认路径输入禁用", not win.ff_path_edit.isEnabled())
+
+# 模拟选择「内置二进制」：env 应写入 internal，QSettings 持久化
+win.ff_combo.setCurrentIndex(1)
+check("切内置后 env=internal",
+      os.environ.get("VIDEO_WATERMARK_FFMPEG") == "internal")
+s = QSettings("VideoWatermark", "VideoWatermark")
+check("QSettings 已持久化 internal", str(s.value("ffmpeg/mode")) == "internal")
+
+# 模拟自定义路径：env 写入路径，输入框启用
+fake = str(ROOT / "scripts" / "gui_smoke.py")  # 存在的文件充当路径占位
+win.ff_combo.setCurrentIndex(2)
+win.ff_path_edit.setText(fake)
+win._on_ff_path_edited()
+check("切自定义后输入框启用", win.ff_path_edit.isEnabled())
+check("自定义路径写入 env", os.environ.get("VIDEO_WATERMARK_FFMPEG") == fake)
+
+# 恢复默认（auto 清空 env），并清理测试写入的 QSettings，避免污染真机设置
+win.ff_combo.setCurrentIndex(0)
+check("恢复自动后 env 清除", "VIDEO_WATERMARK_FFMPEG" not in os.environ)
+s.remove("ffmpeg")
+s.sync()
+
 print("\n" + ("全部通过" if not failures else f"失败 {len(failures)} 项: {failures}"))
 sys.exit(1 if failures else 0)

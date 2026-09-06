@@ -101,12 +101,19 @@ def main() -> int:
               if ok else "SELFTEST_FAIL", flush=True)
         return 0 if ok else 1
 
+    app = QApplication(sys.argv)
+    app.setApplicationName("视频水印工具")
+
+    # 应用已保存的 ffmpeg 二进制设置（QSettings 依赖 QApplication，故在其后）
+    # 须在 ffbin 首次解析之前完成，否则设置不生效
+    from app.ui.main_window import apply_ffmpeg_setting_to_env, load_ffmpeg_setting
+    _mode, _path = load_ffmpeg_setting()
+    apply_ffmpeg_setting_to_env(_mode, _path)
+
     # 提前解析 ffmpeg 二进制（Linux 自动切换 / 显式指定），避免首个任务时才决策
     from app.core import ffbin
     ffbin.get_ffmpeg_exe()
 
-    app = QApplication(sys.argv)
-    app.setApplicationName("视频水印工具")
     _apply_app_icon(app)
     win = MainWindow()
     win.show()

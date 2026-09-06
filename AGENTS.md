@@ -30,7 +30,8 @@
 - `app/core/compositor.py` — `WatermarkCompositor` 逐帧 `apply(frame_rgb, t)`，含时间范围门控、自转。
 - `app/core/encoder.py` — `probe()` 解析分辨率/帧率/时长/是否有音频；`process()` 读帧→合成→编码输出→**合并音频**。`process()` 支持**并行帧流水线**（`parallel` 参数：0=自动按 CPU 核数 2~4、1=串行、N=指定）：`_run_serial` 串行、`_run_pipelined` 多线程（主线程读帧 → N 个 worker 线程并行合成 → 独立写线程按帧序号保序喂给 ffmpeg，有界队列背压）。串行与并行输出**字节级一致**（合成逻辑相同、仅交付方式不同）。
 - `app/core/preview.py` — 单帧预览渲染、轨迹示意图。
-- `app/core/ffbin.py` — **ffmpeg 二进制解析层（v0.3.2）**：统一决定全项目用哪个 ffmpeg，经 imageio-ffmpeg 官方覆写点 `IMAGEIO_FFMPEG_EXE` 生效（编码/探测调用零改动）。优先级：显式指定（CLI `--ffmpeg` / 环境变量 `VIDEO_WATERMARK_FFMPEG`，`internal`=强制内置，路径无效直接报错不回退；须压过子进程继承的镜像值，故先于下一项判断）> 用户已设 IMAGEIO_FFMPEG_EXE > 自动选择（内置缺硬件编码器时，探测系统 ffmpeg 若带 nvenc/qsv/amf/mf/d3d12va 则切换；否则维持内置）。决策进程内缓存，详情 `ffbin.info()`；自动分支异常一律回退内置，绝不影响启动。
+- `app/core/ffbin.py` — **ffmpeg 二进制解析层（v0.3.2）**：统一决定全项目用哪个 ffmpeg，经 imageio-ffmpeg 官方覆写点 `IMAGEIO_FFMPEG_EXE` 生效（编码/探测调用零改动）。优先级：显式指定（CLI `--ffmpeg` / 环境变量 `VIDEO_WATERMARK_FFMPEG`，`internal`=强制内置，路径无效直接报错不回退；须压过子进程继承的镜像值，故先于下一项判断）> 用户已设 IMAGEIO_FFMPEG_EXE > 自动选择（内置缺硬件编码器时，探测系统 ffmpeg 若带 nvenc/qsv/amf/mf/d3d12va 则切换；否则维持内置）。决策进程内缓存，详情 `ffbin.info()`；`ffbin.reset()` 供 GUI 设置切换后清缓存（须连同 `hwaccel.detect_encoders.cache_clear()`）；自动分支异常一律回退内置，绝不影响启动。
+- **GUI ffmpeg 二进制设置（v0.4.0）**：主窗口输出设置区三模式（自动/内置/自定义路径），QSettings（org=app="VideoWatermark"，键 `ffmpeg/mode`、`ffmpeg/path`）持久化；启动顺序为 QApplication → `load_ffmpeg_setting()` → `apply_ffmpeg_setting_to_env()` → `ffbin.get_ffmpeg_exe()`；selftest 路径不读设置。
 - `app/ui/` — `main_window.py`（主窗口+RenderWorker QThread）、`batch_dialog.py`（批量处理）。
 
 ## 编码器关键陷阱（改这里必读）

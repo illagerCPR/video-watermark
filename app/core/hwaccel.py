@@ -184,7 +184,11 @@ def describe_available() -> str:
     """人类可读的可用硬件编码器描述（GUI 提示用）。"""
     avail = detect_encoders()
     if not avail:
-        return "未检测到可用硬件编码器（将使用 CPU 编码 libx264）"
+        msg = "未检测到可用硬件编码器（将使用 CPU 编码 libx264）"
+        if not sys.platform.startswith("win"):
+            msg += ("\nLinux 可安装系统 ffmpeg 启用 GPU 编码"
+                    "（sudo apt install ffmpeg），软件会自动切换使用")
+        return msg
     parts = []
     for eid in _AUTO_ORDER:
         if eid in avail:

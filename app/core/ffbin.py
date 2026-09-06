@@ -144,3 +144,14 @@ def info() -> dict:
     if _info["exe"] is None:
         get_ffmpeg_exe()
     return dict(_info)
+
+
+def reset() -> None:
+    """清除解析缓存（GUI 修改二进制设置后调用）。
+
+    下次 get_ffmpeg_exe() 按当时的环境变量重新决策；注意 hwaccel 的
+    detect_encoders 缓存键含二进制路径，切换后自然失效重测，但其进程内
+    lru_cache 需由调用方一并 `cache_clear()`（避免循环依赖不在此处理）。
+    """
+    get_ffmpeg_exe.cache_clear()
+    _info.update(exe=None, source="未解析", note="")

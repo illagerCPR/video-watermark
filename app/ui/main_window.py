@@ -11,7 +11,7 @@ import sys
 import time
 from collections import deque
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QSettings, QThread, Signal
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QSlider, QSpinBox, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from ..core import ffbin
 from ..core import preview
 from ..core.encoder import probe, process
 from ..core.hwaccel import describe_available
@@ -30,6 +31,31 @@ from ..models import (
     TRAJECTORIES, TRAJECTORY_LABELS, WatermarkConfig,
 )
 from .batch_dialog import BatchDialog
+
+# QSettings 组织/应用名（ffmpeg 二进制设置等 GUI 偏好的持久化）
+_SETTINGS_ORG = "VideoWatermark"
+_SETTINGS_APP = "VideoWatermark"
+
+FF_MODE_AUTO = "auto"          # 自动（推荐）：交给 ffbin 解析层决策
+FF_MODE_INTERNAL = "internal"  # 强制使用内置二进制
+FF_MODE_CUSTOM = "custom"      # 使用自定义路径
+
+
+def load_ffmpeg_setting() -> tuple[str, str]:
+    """读取已保存的 ffmpeg 二进制设置，返回 (mode, path)。"""
+    s = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+    return (str(s.value("ffmpeg/mode", FF_MODE_AUTO)),
+            str(s.value("ffmpeg/path", "")))
+
+
+def apply_ffmpeg_setting_to_env(mode: str, path: str) -> None:
+    """把已保存的设置写入环境变量（须在 ffbin 首次解析前调用）。"""
+    if mode == FF_MODE_CUSTOM and path:
+        os.environ["VIDEO_WATERMARK_FFMPEG"] = path
+    elif mode == FF_MODE_INTERNAL:
+        os.environ["VIDEO_WATERMARK_FFMPEG"] = FF_MODE_INTERNAL
+    else:
+        os.environ.pop("VIDEO_WATERMARK_FFMPEG", None)
 
 
 def pil_to_pixmap(img) -> QPixmap:
@@ -102,6 +128,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_param_panel(), 0)
         root.addWidget(self._build_preview_panel(), 1)
         self._sync_panels()
+        self._init_ff_settings_ui()
 
     # ------------------------------------------------------------------
     # 参数面板
@@ -321,6 +348,29 @@ class MainWindow(QMainWindow):
         self.hw_decode_check = QCheckBox("启用硬件解码（失败自动回退）")
         self.hw_decode_check.setChecked(True)
         ol.addRow(self.hw_decode_check)
+
+        # ffmpeg 二进制来源（v0.4.0：自动 / 内置 / 自定义路径，QSettings 持久化）
+        self.ff_combo = QComboBox()
+        self.ff_combo.addItem("自动（推荐）", FF_MODE_AUTO)
+        self.ff_combo.addItem("内置二进制", FF_MODE_INTERNAL)
+        self.ff_combo.addItem("自定义路径…", FF_MODE_CUSTOM)
+        self.ff_combo.currentIndexChanged.connect(self._on_ff_mode_changed)
+        ol.addRow("ffmpeg 二进制", self.ff_combo)
+
+        ff_path_row = QHBoxLayout()
+        self.ff_path_edit = QLineEdit()
+        self.ff_path_edit.setPlaceholderText(
+            "自定义 ffmpeg 路径（选择「自定义路径…」时生效）")
+        self.ff_path_edit.editingFinished.connect(self._on_ff_path_edited)
+        self.ff_browse_btn = QPushButton("浏览…")
+        self.ff_browse_btn.clicked.connect(self._on_ff_browse)
+        ff_path_row.addWidget(self.ff_path_edit, 1)
+        ff_path_row.addWidget(self.ff_browse_btn)
+        ol.addRow(ff_path_row)
+        self.ff_status_label = QLabel("")
+        self.ff_status_label.setStyleSheet("color:#888; font-size:11px;")
+        self.ff_status_label.setWordWrap(True)
+        ol.addRow(self.ff_status_label)
 
         hw_info_row = QHBoxLayout()
         self.hw_info_label = QLabel("可用硬件编码器将在生成或点击检测时自动识别")
@@ -575,10 +625,69 @@ class MainWindow(QMainWindow):
         """硬件编码关闭时，视频编码（h264/hevc）选择不可用（libx264 固定 H.264）。"""
         self.hw_codec_combo.setEnabled(self.hw_encoder_combo.currentData() != "none")
 
-    def _detect_hw(self):
-        """探测当前机器可用的硬件编码器并显示结果。"""
+    # -- ffmpeg 二进制设置（v0.4.0） ------------------------------------
+
+    def _init_ff_settings_ui(self):
+        """构造完成后调用：按已保存设置初始化控件状态。"""
+        mode, path = load_ffmpeg_setting()
+        idx = self.ff_combo.findData(mode)
+        self.ff_combo.blockSignals(True)
+        self.ff_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.ff_combo.blockSignals(False)
+        self.ff_path_edit.setText(path)
+        self.ff_path_edit.setEnabled(mode == FF_MODE_CUSTOM)
+        self.ff_browse_btn.setEnabled(mode == FF_MODE_CUSTOM)
+        self.ff_status_label.setText(self._ff_status_text())
+
+    def _ff_status_text(self) -> str:
+        """当前生效的二进制摘要（探测过才有内容，否则留空避免误启动解析）。"""
         try:
-            self.hw_info_label.setText(describe_available())
+            info = ffbin.info()
+        except Exception:  # noqa: BLE001
+            return ""
+        return f"当前使用：{info['exe']}（{info['source']}）"
+
+    def _save_ff_setting(self):
+        s = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+        s.setValue("ffmpeg/mode", self.ff_combo.currentData())
+        s.setValue("ffmpeg/path", self.ff_path_edit.text().strip())
+
+    def _apply_ff_setting(self):
+        """把 UI 选择写入环境变量并使解析/探测缓存失效（下次生成/检测生效）。"""
+        mode = self.ff_combo.currentData()
+        path = self.ff_path_edit.text().strip()
+        apply_ffmpeg_setting_to_env(mode, path)
+        ffbin.reset()
+        from ..core import hwaccel as _hw
+        _hw.detect_encoders.cache_clear()
+
+    def _on_ff_mode_changed(self):
+        mode = self.ff_combo.currentData()
+        self.ff_path_edit.setEnabled(mode == FF_MODE_CUSTOM)
+        self.ff_browse_btn.setEnabled(mode == FF_MODE_CUSTOM)
+        self._save_ff_setting()
+        self._apply_ff_setting()
+        self.ff_status_label.setText(self._ff_status_text())
+
+    def _on_ff_path_edited(self):
+        self._save_ff_setting()
+        self._apply_ff_setting()
+        self.ff_status_label.setText(self._ff_status_text())
+
+    def _on_ff_browse(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 ffmpeg 可执行文件", self.ff_path_edit.text())
+        if path:
+            self.ff_path_edit.setText(path)
+            self._on_ff_path_edited()
+
+    def _detect_hw(self):
+        """探测当前机器可用的硬件编码器并显示结果（附当前使用的二进制）。"""
+        try:
+            text = describe_available()
+            info = ffbin.info()
+            text += f"\n当前 ffmpeg：{info['exe']}（{info['source']}）"
+            self.hw_info_label.setText(text)
         except Exception as exc:  # noqa: BLE001
             self.hw_info_label.setText(f"检测失败：{exc}")
 

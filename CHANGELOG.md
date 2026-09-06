@@ -4,9 +4,12 @@
 
 ## [Unreleased]
 
+### 新增（v0.4.0 进行中）
+- **GUI ffmpeg 二进制来源设置**：输出设置区可选「自动（推荐）/ 内置二进制 / 自定义路径」，QSettings 持久化；切换即时生效于下次生成/检测
+- **「检测」结果增强**：同时显示当前实际使用的 ffmpeg 二进制与来源；Linux 未检测到硬件编码器时提示安装系统 ffmpeg
+- **Linux AppImage 产物**（批次 C 进行中）
+
 ### 计划中
-- GUI ffmpeg 二进制设置项与检测提示增强
-- Linux AppImage 产物
 - VAAPI 硬件编码（AMD Linux）——见 README「已知限制」
 
 ## [v0.3.2] - 2026-09-06
