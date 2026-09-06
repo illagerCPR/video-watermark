@@ -16,7 +16,7 @@
 ## 入口
 
 - GUI：项目根目录 `python -m app.main`（Windows 双击 `启动.bat`、Linux/macOS 运行 `./启动.sh`，均会自动建 venv+装依赖）。
-- **TUI（v0.5.0）**：`python -m app.tui`、`python -m app.cli --tui`、`./启动.sh --tui`（Linux）、`启动-tui.bat`（Windows）。Textual 全屏界面：全字段表单 + 配置 JSON 往返 + 半块像素预览（F5/F6）+ 导出进度/取消（F7）。按键 F5/F6/F7/Ctrl+S/Esc/Ctrl+Q。Windows exe `--tui`（v0.5.1 重写）：main.py `_setup_tui_console()` 沿**祖先链**逐个 `AttachConsole(pid)` 找到宿主终端（`ATTACH_PARENT_PROCESS` 会打到 PyInstaller onefile 的无控制台引导器上，必然失败），成功后 `SetStdHandle` 三件套并重绑 `sys.stdout/__stdout__/stderr/__stderr__/stdin/__stdin__`；Windows Terminal / PowerShell / cmd 实测可用，失败（双击启动、无任何带控制台祖先）弹提示后退出码 2。设 `VIDEO_WATERMARK_TUI_DEBUG=1` 把判定过程追加到 `%TEMP%\video_watermark_tui_debug.log`。
+- **TUI（v0.5.0）**：`python -m app.tui`、`python -m app.cli --tui`、`./启动.sh --tui`（Linux）、`启动-tui.bat`（Windows）。Textual 全屏界面：全字段表单 + 配置 JSON 往返 + 半块像素预览（F5/F6）+ 导出进度/取消（F7）。按键 F5/F6/F7/Ctrl+S/Esc/Ctrl+Q。Windows 打包版 TUI 入口（v0.5.2）：**`VideoWatermarkTUI.exe`**（控制台子系统垫片，拉起同目录 `VideoWatermark.exe --tui` 并等待）——cmd/PowerShell 不等待 GUI 程序、shell 会继续读控制台输入与 TUI 抢键，垫片使 shell 阻塞等待、TUI 独占键盘；`VideoWatermark.exe --tui` 仍可直接运行（祖先链 `AttachConsole` 附加宿主终端），但按键会与 shell 抢。`_setup_tui_console()` 沿祖先链逐个 `AttachConsole(pid)`（`ATTACH_PARENT_PROCESS` 会打到 PyInstaller onefile 的无控制台引导器上，必然失败），成功后 `SetStdHandle` 三件套并重绑 `sys.stdout/__stdout__/stderr/__stderr__/stdin/__stdin__`；无可附加控制台（双击启动）弹提示后退出码 2。设 `VIDEO_WATERMARK_TUI_DEBUG=1` 把判定过程追加到 `%TEMP%\video_watermark_tui_debug.log`。
 - 命令行：`python -m app.cli --input in.mp4 --output out.mp4 [--mode tiled|motion] [--kind text|image] [--text|--image] [--angle] [--trajectory] [--set k=v] [--crf --preset --scale] [--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf] [--hw-codec h264|hevc] [--no-hw-decode] [--ffmpeg PATH|internal]`。
   - `--set k=v` 覆盖 `WatermarkConfig` 任意字段（可重复）；`--print-config` 打印完整配置 JSON。
   - `--hw-encoder` 默认 `auto`（自动选可用硬件编码器，无 GPU 回退 libx264）；`--hw-codec` 仅硬件编码时生效；`--no-hw-decode` 禁用硬件解码（默认开 `-hwaccel auto`，失败自动回退软解）。
@@ -78,11 +78,11 @@
 
 - **TUI 测试怪癖（v0.5.0）**：`pilot.click` 后须 `await pilot.pause(0.5)`（按钮按压动画周期，短 pause 会丢 Pressed 消息）；长表单中按钮可能在滚动视口外，先 `scroll_visible(animate=False)` 或改用按键（`pilot.press("f5")` 无坐标依赖）；跨线程回调（call_from_thread 里的 screen 访问）必须 try/except `ScreenStackError`（app 关闭竞态）。
 - **Qt 布局怪癖（v0.5.1）**：与按钮同处 `QHBoxLayout` 的 wordWrap `QLabel` 动态 `setText` 成多行后，行高不按 `heightForWidth` 撑开（sizePolicy 默认不带该标志），长 ffmpeg 路径换行会压到相邻控件——动态多行信息放**独立整行**标签（如 `hw_detail_label`），并对其调 `_wrap_grow()`（main_window.py）。
-- **Windows 控制台怪癖（v0.5.1）**：ConPTY（Windows Terminal）下 `GetConsoleWindow()` 恒为 0（控制台程序也是如此），判断"有无控制台"要用 `GetStdHandle+GetConsoleMode` 或把 `AttachConsole` 报 `ERROR_ACCESS_DENIED` 视为"已有"；GUI exe 无 stdio 时 Textual 输出走 `sys.__stdout__`、输入走 `GetStdHandle(STD_INPUT_HANDLE)`，附加控制台后必须 `SetStdHandle` 三件套并重绑 `__stdout__/__stderr__/__stdin__`（缺 `__stdin__` 会在 `enable_application_mode` 崩，且 bell 断言会掩掉原始异常）。
+- **Windows 控制台怪癖（v0.5.1/0.5.2）**：ConPTY（Windows Terminal）下 `GetConsoleWindow()` 恒为 0（控制台程序也是如此），判断"有无控制台"要用 `GetStdHandle+GetConsoleMode` 或把 `AttachConsole` 报 `ERROR_ACCESS_DENIED` 视为"已有"；GUI exe 无 stdio 时 Textual 输出走 `sys.__stdout__`、输入走 `GetStdHandle(STD_INPUT_HANDLE)`，附加控制台后必须 `SetStdHandle` 三件套并重绑 `__stdout__/__stderr__/__stdin__`（缺 `__stdin__` 会在 `enable_application_mode` 崩，且 bell 断言会掩掉原始异常）。**cmd/PowerShell 启动 GUI 子系统程序不等待且继续读控制台输入**——GUI exe 的 TUI 会与 shell 抢键，TUI 入口必须是控制台子系统程序（`VideoWatermarkTUI.exe` 垫片）或控制台 python（bat）。
 
 ## 打包与发布
 
-- 构建：`.venv\Scripts\pyinstaller.exe video_watermark.spec --noconfirm`（Windows onefile，产物 `dist\VideoWatermark.exe`，约 86MB；Linux 同一 spec 直接 `pyinstaller video_watermark.spec --noconfirm`，产物 `dist/VideoWatermark` ELF，约 108MB，v0.3.0 实测 selftest 通过）。**spec 文件已从中文名改名 `video_watermark.spec`，产物名固定英文 `VideoWatermark`，勿改回。**
+- 构建：`.venv\Scripts\pyinstaller.exe video_watermark.spec --noconfirm`（Windows onefile，产物 `dist\VideoWatermark.exe` 约 86MB + `dist\VideoWatermarkTUI.exe` 控制台垫片约 10MB；Linux 同一 spec 直接 `pyinstaller video_watermark.spec --noconfirm`，产物 `dist/VideoWatermark` ELF，约 108MB，v0.3.0 实测 selftest 通过）。**spec 文件已从中文名改名 `video_watermark.spec`，产物名固定英文 `VideoWatermark`，勿改回。**
 - 重建前先 `Stop-Process -Name VideoWatermark -Force`（残留的 onefile 引导进程会锁 exe 导致 PermissionError）。
 - GUI 子系统 exe 退出码：PowerShell 须用 `Start-Process -Wait -PassThru` 读 `$p.ExitCode`，`&`/`$LASTEXITCODE` 会得到空值。
 - **构建产物与媒体不入库**：`dist/`、`build/`、`outputs/`、`*.mp4`、`*.png` 等均在 `.gitignore`。产物通过 GitHub Releases 分发。

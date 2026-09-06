@@ -2,6 +2,18 @@
 
 本项目所有显著变更记录于此。格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本（`vX.Y.Z`，发版即打 tag，不覆盖旧标签）。
 
+## [v0.5.2] - 2026-09-06
+
+### 修复
+- **Windows 运行 `VideoWatermark.exe --tui` 进得去 TUI 但按键无响应**：cmd/PowerShell 启动 GUI 子系统程序时**不等待其退出**并继续读取控制台输入（实测 PowerShell ~0.3s、cmd 批处理 ~0.6s 即返回提示符），用户按键被 shell 提示符抢走。经验证 TUI 自身输入读取路径完好（向运行中的 TUI 注入 Ctrl+Q 按键记录可正常退出）。
+
+### 新增
+- **`VideoWatermarkTUI.exe`（Windows，控制台子系统垫片）**：shell 会等待控制台程序退出——垫片拉起同目录 `VideoWatermark.exe --tui` 并等待，期间 TUI 独占键盘输入；双击垫片也会打开终端窗口运行 TUI。现为本机 TUI 的**推荐启动方式**（`python -m app.tui` / `启动-tui.bat` 不受影响）。CI 产物新增 `VideoWatermarkTUI-windows-x86_64.exe`
+- `VideoWatermark.exe --tui` 非垫片启动时在控制台打印抢键提示（垫片经环境变量 `VIDEO_WATERMARK_TUI_PARENT_SHIM=1` 标记，不重复提示）
+
+### 变更
+- `video_watermark.spec` 拆为双产物：主程序（GUI 子系统，不变）+ TUI 垫片（仅 Windows，无 Qt/ffmpeg 依赖）
+
 ## [v0.5.1] - 2026-09-06
 
 ### 修复

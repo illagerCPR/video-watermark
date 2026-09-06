@@ -76,12 +76,14 @@ jobs:
       - name: Package (Windows rename)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Copy-Item "dist\VideoWatermark.exe" "VideoWatermark-windows-x86_64.exe"
+        run: |
+          Copy-Item "dist\VideoWatermark.exe" "VideoWatermark-windows-x86_64.exe"
+          Copy-Item "dist\VideoWatermarkTUI.exe" "VideoWatermarkTUI-windows-x86_64.exe"
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
-          path: VideoWatermark-*-x86_64.*
+          path: VideoWatermark*-x86_64.* # 含主程序与 TUI 垫片（VideoWatermarkTUI-…）
           if-no-files-found: error
 
   release:

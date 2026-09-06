@@ -51,6 +51,11 @@ def _apply_app_icon(app) -> None:
         pass
 
 
+# --tui 时是否经由 AttachConsole 接管控制台（True=非控制台程序原生stdio，
+# 而是 GUI 子系统 exe 附加到宿主终端；用于判断是否打印垫片提示）
+_TUI_ATTACHED = False
+
+
 def _setup_tui_console() -> bool:
     """TUI 模式（--tui）需要控制台。Windows GUI 子系统 exe 没有 stdio——
     尝试附加祖先进程的控制台并接好标准句柄；失败（如双击启动）返回 False。
@@ -170,6 +175,8 @@ def _setup_tui_console() -> bool:
     sys.__stdout__ = out_f
     sys.__stderr__ = err_f
     sys.__stdin__ = in_f
+    global _TUI_ATTACHED
+    _TUI_ATTACHED = True
     _flush(True)
     return True
 
@@ -237,6 +244,16 @@ def main() -> int:
                 pass
             return 2
         sys.argv.remove("--tui")
+        # 直接运行 GUI exe --tui 时 shell 不等待、会与 TUI 抢键盘（v0.5.2）：
+        # 非"垫片拉起"的附加启动打印提示，引导使用 VideoWatermarkTUI.exe
+        if _TUI_ATTACHED and not os.environ.get("VIDEO_WATERMARK_TUI_PARENT_SHIM"):
+            try:
+                print("提示：cmd/PowerShell 不等待 GUI 程序、会与 TUI 抢键盘——"
+                      "若按键无响应，请改用同目录的 VideoWatermarkTUI.exe 启动，"
+                      "或在 cmd 中用 start /wait 运行。")
+                sys.stdout.flush()
+            except Exception:  # noqa: BLE001
+                pass
         from app.tui import main as tui_main
         return tui_main(sys.argv[1:])
 
