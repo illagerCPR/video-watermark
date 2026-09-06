@@ -16,7 +16,7 @@
 ## 入口
 
 - GUI：项目根目录 `python -m app.main`（Windows 双击 `启动.bat`、Linux/macOS 运行 `./启动.sh`，均会自动建 venv+装依赖）。
-- **TUI（v0.5.0）**：`python -m app.tui`、`python -m app.cli --tui`、`./启动.sh --tui`（Linux）、`启动-tui.bat`（Windows）。Textual 全屏界面：全字段表单 + 配置 JSON 往返 + 半块像素预览（F5/F6）+ 导出进度/取消（F7）。按键 F5/F6/F7/Ctrl+S/Esc/Ctrl+Q。Windows exe `--tui`：main.py 先 AttachConsole 附加父控制台（**实验性**），失败（双击启动）弹提示后退出码 2。
+- **TUI（v0.5.0）**：`python -m app.tui`、`python -m app.cli --tui`、`./启动.sh --tui`（Linux）、`启动-tui.bat`（Windows）。Textual 全屏界面：全字段表单 + 配置 JSON 往返 + 半块像素预览（F5/F6）+ 导出进度/取消（F7）。按键 F5/F6/F7/Ctrl+S/Esc/Ctrl+Q。Windows exe `--tui`（v0.5.1 重写）：main.py `_setup_tui_console()` 沿**祖先链**逐个 `AttachConsole(pid)` 找到宿主终端（`ATTACH_PARENT_PROCESS` 会打到 PyInstaller onefile 的无控制台引导器上，必然失败），成功后 `SetStdHandle` 三件套并重绑 `sys.stdout/__stdout__/stderr/__stderr__/stdin/__stdin__`；Windows Terminal / PowerShell / cmd 实测可用，失败（双击启动、无任何带控制台祖先）弹提示后退出码 2。设 `VIDEO_WATERMARK_TUI_DEBUG=1` 把判定过程追加到 `%TEMP%\video_watermark_tui_debug.log`。
 - 命令行：`python -m app.cli --input in.mp4 --output out.mp4 [--mode tiled|motion] [--kind text|image] [--text|--image] [--angle] [--trajectory] [--set k=v] [--crf --preset --scale] [--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf] [--hw-codec h264|hevc] [--no-hw-decode] [--ffmpeg PATH|internal]`。
   - `--set k=v` 覆盖 `WatermarkConfig` 任意字段（可重复）；`--print-config` 打印完整配置 JSON。
   - `--hw-encoder` 默认 `auto`（自动选可用硬件编码器，无 GPU 回退 libx264）；`--hw-codec` 仅硬件编码时生效；`--no-hw-decode` 禁用硬件解码（默认开 `-hwaccel auto`，失败自动回退软解）。
@@ -31,7 +31,7 @@
 - `app/core/compositor.py` — `WatermarkCompositor` 逐帧 `apply(frame_rgb, t)`，含时间范围门控、自转。
 - `app/core/encoder.py` — `probe()` 解析分辨率/帧率/时长/是否有音频；`process()` 读帧→合成→编码输出→**合并音频**。`process()` 支持**并行帧流水线**（`parallel` 参数：0=自动按 CPU 核数 2~4、1=串行、N=指定）：`_run_serial` 串行、`_run_pipelined` 多线程（主线程读帧 → N 个 worker 线程并行合成 → 独立写线程按帧序号保序喂给 ffmpeg，有界队列背压）。串行与并行输出**字节级一致**（合成逻辑相同、仅交付方式不同）。
 - `app/core/preview.py` — 单帧预览渲染、轨迹示意图。
-- **`app/tui.py`（TUI，v0.5.0）**：Textual 全屏应用——全字段表单（collect_config 抛 ConfigError 带[字段名]）、fill_from_config 回填、collect_export_params（crf/preset/scale/hw_*/parallel）、ExportScreen（ProgressBar+取消）、PreviewScreen（半块像素）。**布局陷阱：`#form` 必须 `height: 1fr`（滚动视口），用 auto 会溢出屏幕且无法滚动**。
+- **`app/tui.py`（TUI，v0.5.0）**：Textual 全屏应用——全字段表单（collect_config 抛 ConfigError 带[字段名]）、fill_from_config 回填、collect_export_params（crf/preset/scale/hw_*/parallel）、ExportScreen（ProgressBar+取消）、PreviewScreen（半块像素）。**布局陷阱：`#form` 必须 `height: 1fr`（滚动视口），用 auto 会溢出屏幕且无法滚动**。**行容器陷阱（v0.5.1）**：滚动容器内 `Horizontal` 默认 `height: 1fr` 会塌缩成 1 行（按钮 3 行画不下→滚到底也看不到最后一行），必须显式 `#form Horizontal { height: auto }`；`Input` 默认 `width: 100%`，与按钮同处一行会把按钮挤出 `overflow: hidden` 的行外，行内须改 `width: 1fr`。
 - **`app/tui_preview.py`（v0.5.0）**：PIL 图像 → `▀` 半块字符 + 24bit RGB style 的 rich.text.Text（image_to_half_blocks，宽度自适应）；抽帧/轨迹复用 app/core/preview.py。
 - `app/core/encoder.py` 新增 `ProcessCancelled`（v0.5.0）：`process(..., cancel_event=threading.Event)` 置位后中断并抛出；临时文件在 **writer.close() 之后**删除（close 会让 ffmpeg 重写空文件，先删会被复活）；并行路径取消走 state["error"] 机制，跳出读帧循环后仍需收尾队列排空在途帧。
 - `app/core/ffbin.py` — **ffmpeg 二进制解析层（v0.3.2）**：统一决定全项目用哪个 ffmpeg，经 imageio-ffmpeg 官方覆写点 `IMAGEIO_FFMPEG_EXE` 生效（编码/探测调用零改动）。优先级：显式指定（CLI `--ffmpeg` / 环境变量 `VIDEO_WATERMARK_FFMPEG`，`internal`=强制内置，路径无效直接报错不回退；须压过子进程继承的镜像值，故先于下一项判断）> 用户已设 IMAGEIO_FFMPEG_EXE > 自动选择（内置缺硬件编码器时，探测系统 ffmpeg 若带 nvenc/qsv/amf/mf/d3d12va 则切换；否则维持内置）。决策进程内缓存，详情 `ffbin.info()`；`ffbin.reset()` 供 GUI 设置切换后清缓存（须连同 `hwaccel.detect_encoders.cache_clear()`）；自动分支异常一律回退内置，绝不影响启动。
@@ -66,7 +66,7 @@
 - Windows（PowerShell）：`$env:PYTHONIOENCODING='utf-8'; .\.venv\Scripts\python.exe scripts\<name>.py`
 - Linux/macOS：`PYTHONIOENCODING=utf-8 .venv/bin/python scripts/<name>.py`（GUI 测试另加 `QT_QPA_PLATFORM=offscreen`）
 
-- `smoke_test.py` 轨迹坐标/文字图片渲染逻辑；`verify_ffbin.py` ffbin 解析层专项（internal/显式路径/环境变量优先级/联动，v0.3.2 起）；`tui_test.py` TUI 全流程专项（Pilot 无终端自动化：表单往返/校验/配置预载保存/预览屏/导出取消，v0.5.0 起）；`verify_step1.py` 像素级成品验证（水印差异 + 轨迹质心 vs `position_at`）；`gui_smoke.py` GUI 离屏冒烟；`gui_export_test.py`/`step3_export_test.py`/`step4_batch_test.py` 端到端导出/编码参数/批量；`verify_time_range.py` 时间范围；`verify_audio.py` 音频保留；`verify_hw.py` 硬件加速专项（探测 + 各硬件编码器实跑 + 回退 + 硬解 + 音频，无硬件编码器时 GPU 项自动 SKIP）；`verify_pipeline.py` 并行流水线专项（串行/并行字节级一致 + GPU/移动/硬解组合，GPU 断言同样环境感知）；`step1_demo.py` 生成样例输出到 `outputs/`。
+- `smoke_test.py` 轨迹坐标/文字图片渲染逻辑；`verify_ffbin.py` ffbin 解析层专项（internal/显式路径/环境变量优先级/联动，v0.3.2 起）；`tui_test.py` TUI 全流程专项（Pilot 无终端自动化：表单往返/校验/配置预载保存/预览屏/导出取消，v0.5.0 起；第 9 节布局回归：横向溢出/行内越界/底部按钮可达，v0.5.1 起）；`verify_step1.py` 像素级成品验证（水印差异 + 轨迹质心 vs `position_at`）；`gui_smoke.py` GUI 离屏冒烟（第 8 节长路径检测布局回归，v0.5.1 起）；`gui_export_test.py`/`step3_export_test.py`/`step4_batch_test.py` 端到端导出/编码参数/批量；`verify_time_range.py` 时间范围；`verify_audio.py` 音频保留；`verify_hw.py` 硬件加速专项（探测 + 各硬件编码器实跑 + 回退 + 硬解 + 音频，无硬件编码器时 GPU 项自动 SKIP）；`verify_pipeline.py` 并行流水线专项（串行/并行字节级一致 + GPU/移动/硬解组合，GPU 断言同样环境感知）；`step1_demo.py` 生成样例输出到 `outputs/`。
 
 测试怪癖：
 - GUI 测试须设 `QT_QPA_PLATFORM=offscreen`，且 `win.show()` 后才能 `isVisible()` 为真。
@@ -77,6 +77,8 @@
 - **Linux 硬件编码可用性随环境而变（v0.3.2 起）**：`verify_hw.py`/`verify_pipeline.py` 的 GPU 断言结果取决于 ffbin 最终选定的二进制——有带硬件编码器的系统 ffmpeg（或 `--ffmpeg`/`VIDEO_WATERMARK_FFMPEG` 指定）+ GPU 驱动时全过（WSL2 + RTX 4050 + 系统 ffmpeg 4.4 实测 nvenc 全过）；纯内置二进制的 Linux 则 GPU 断言 FAIL（其余路径应通过），属预期。
 
 - **TUI 测试怪癖（v0.5.0）**：`pilot.click` 后须 `await pilot.pause(0.5)`（按钮按压动画周期，短 pause 会丢 Pressed 消息）；长表单中按钮可能在滚动视口外，先 `scroll_visible(animate=False)` 或改用按键（`pilot.press("f5")` 无坐标依赖）；跨线程回调（call_from_thread 里的 screen 访问）必须 try/except `ScreenStackError`（app 关闭竞态）。
+- **Qt 布局怪癖（v0.5.1）**：与按钮同处 `QHBoxLayout` 的 wordWrap `QLabel` 动态 `setText` 成多行后，行高不按 `heightForWidth` 撑开（sizePolicy 默认不带该标志），长 ffmpeg 路径换行会压到相邻控件——动态多行信息放**独立整行**标签（如 `hw_detail_label`），并对其调 `_wrap_grow()`（main_window.py）。
+- **Windows 控制台怪癖（v0.5.1）**：ConPTY（Windows Terminal）下 `GetConsoleWindow()` 恒为 0（控制台程序也是如此），判断"有无控制台"要用 `GetStdHandle+GetConsoleMode` 或把 `AttachConsole` 报 `ERROR_ACCESS_DENIED` 视为"已有"；GUI exe 无 stdio 时 Textual 输出走 `sys.__stdout__`、输入走 `GetStdHandle(STD_INPUT_HANDLE)`，附加控制台后必须 `SetStdHandle` 三件套并重绑 `__stdout__/__stderr__/__stdin__`（缺 `__stdin__` 会在 `enable_application_mode` 崩，且 bell 断言会掩掉原始异常）。
 
 ## 打包与发布
 

@@ -23,6 +23,7 @@ from textual.screen import ModalScreen
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Footer, Header, Input, ProgressBar, Select, Static, TextArea
 
+from . import __version__
 from .core.encoder import ProcessCancelled, process
 from .models import (
     KIND_IMAGE, KIND_TEXT, MODE_MOTION, MODE_TILED,
@@ -122,10 +123,14 @@ class WatermarkTuiApp(App[None]):
     """视频水印 TUI 主应用。"""
 
     TITLE = "视频水印工具 · TUI"
-    SUB_TITLE = "v0.5.0-dev"
+    SUB_TITLE = f"v{__version__}"  # 单一来源：app/__init__.py
 
     CSS = """
     #form { height: 1fr; padding: 0 1; } /* 1fr=滚动视口：长表单内部滚动，勿改 auto（会溢出屏幕） */
+    /* 滚动容器里 Horizontal 的 1fr 高会塌成 1 行（按钮 3 行画不下→滚到底也看不到最后一行），
+       Input 默认 width:100% 会把同行按钮挤出 overflow:hidden 的行外 → 显式改为 auto/1fr */
+    #form Horizontal { height: auto; }
+    #form Horizontal Input { width: 1fr; }
     .section { color: $text-muted; text-style: bold; margin-top: 1; }
     Input, Select { margin-bottom: 0; }
     TextArea { height: 5; margin-bottom: 0; }

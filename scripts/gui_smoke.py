@@ -115,5 +115,35 @@ check("恢复自动后 env 清除", "VIDEO_WATERMARK_FFMPEG" not in os.environ)
 s.remove("ffmpeg")
 s.sync()
 
+print("== 8. 硬件检测信息布局（v0.5.1 回归） ==")
+# 打包后的 ffmpeg 路径很长（_MEI 临时目录），多行换行曾把文字压到相邻控件上：
+# 详情现放独立整行的 hw_detail_label，且 wordWrap 标签带 heightForWidth 策略。
+from PySide6.QtWidgets import QPushButton  # noqa: E402
+
+from app.core import ffbin as _ffbin  # noqa: E402
+
+_orig_info = _ffbin.info
+_ffbin.info = lambda: {
+    "exe": (r"C:\Users\illag\AppData\Local\Temp\_MEI00005be82"
+            r"\imageio_ffmpeg\binaries-win-x86_64-v7.1.exe"),
+    "source": "内置二进制",
+}
+try:
+    win._detect_hw()
+    app.processEvents()
+    app.processEvents()
+finally:
+    _ffbin.info = _orig_info
+_info, _detail = win.hw_info_label, win.hw_detail_label
+check("检测摘要为单行", "\n" not in _info.text(), _info.text())
+_need = _detail.heightForWidth(_detail.width())
+check("详情行高度按换行撑开",
+      _detail.isVisible() and _detail.height() >= _need,
+      f"h={_detail.height()} need={_need}")
+_btn = next(b for b in win.findChildren(QPushButton)
+            if b.text() == "检测")
+check("详情行不与按钮行重叠",
+      _detail.geometry().top() >= _btn.geometry().bottom() - 1)
+
 print("\n" + ("全部通过" if not failures else f"失败 {len(failures)} 项: {failures}"))
 sys.exit(1 if failures else 0)

@@ -2,6 +2,20 @@
 
 本项目所有显著变更记录于此。格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本（`vX.Y.Z`，发版即打 tag，不覆盖旧标签）。
 
+## [v0.5.1] - 2026-09-06
+
+### 修复
+- **GUI「检测」后文字布局错乱**：检测结果与「检测」按钮同处一个 `QHBoxLayout` 时，换行 `QLabel` 的行高不随长文本（打包后 `_MEI` 长 ffmpeg 路径）换行撑开，文字压到相邻控件。修复：多行结果移入独立整行的详情标签，动态换行标签统一启用 `heightForWidth` 尺寸策略
+- **TUI 表单滚到底仍看不到底部按钮**（加载配置/保存配置）：滚动容器内 `Horizontal` 行的默认 `height: 1fr` 塌缩成 1 行（按钮 3 行画不下），虚拟内容高度比实际矮 2 行。修复：`#form Horizontal { height: auto }`
+- **TUI 预览区按钮不可见**（预览帧/轨迹示意被推出行右缘）：`Input` 默认 `width: 100%` 占满整行，同行按钮被 `overflow: hidden` 裁掉。修复：行内 `Input` 改 `width: 1fr`
+- **Windows Terminal 下 `exe --tui` 误弹"请从命令行启动"**（退出码 2）：ConPTY 环境下 `GetConsoleWindow()` 恒为 0，且 `ATTACH_PARENT_PROCESS` 附加到的是 PyInstaller onefile 的无控制台引导器，附加必然失败。重写 `_setup_tui_console`：改用 `GetStdHandle+GetConsoleMode` 判定 + 沿祖先链 `AttachConsole(pid)`；接好 `SetStdHandle` 三件套并重绑 `sys.stdout/__stdout__/stderr/__stderr__/stdin/__stdin__`（Textual Windows 驱动依赖，缺 `__stdin__` 会在 `enable_application_mode` 崩溃）。实测 Windows Terminal 标签页内 TUI 正常运行
+- TUI 标题版本号改由 `app/__init__.py` 单一来源（此前硬编码 `v0.5.0-dev`）；`__version__` 同步升至 0.5.1
+
+### 变更
+- 测试：`tui_test.py` 新增第 9 节布局回归（三种窗口尺寸下断言无横向溢出、行内子件不越界、滚到底可见底部按钮，含 resize 往返）；`gui_smoke.py` 新增第 8 节（模拟长 ffmpeg 路径断言检测信息布局不重叠）
+- 新增环境变量 `VIDEO_WATERMARK_TUI_DEBUG=1`：exe `--tui` 控制台附加判定过程写入 `%TEMP%\video_watermark_tui_debug.log`
+- README 清理过期「Linux 暂无 AppImage」条目（v0.4.0 起已提供）
+
 ## [v0.5.0] - 2026-09-06
 
 ### 新增

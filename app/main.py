@@ -52,28 +52,170 @@ def _apply_app_icon(app) -> None:
 
 
 def _setup_tui_console() -> bool:
-    """TUI 模式（--tui）需要终端。Windows GUI 子系统 exe 没有 stdio——
-    尝试附加父进程控制台并重定向标准流；失败（如双击启动）返回 False。
+    """TUI 模式（--tui）需要控制台。Windows GUI 子系统 exe 没有 stdio——
+    尝试附加祖先进程的控制台并接好标准句柄；失败（如双击启动）返回 False。
 
     Linux/macOS 终端天然可用，直接返回 True。
+
+    v0.5.1 修复（Windows Terminal 下 exe --tui 误弹"请从命令行启动"）：
+    - PyInstaller onefile 的 GUI 引导器会插在 shell 与 python 子进程之间，
+      ATTACH_PARENT_PROCESS 附加到的是**引导器**（无控制台），必然失败；
+      现改为沿祖先链（Toolhelp32 快照）逐个 AttachConsole(pid)，第一个
+      带控制台的祖先（powershell/cmd 所在终端）即为宿主。
+    - ConPTY（Windows Terminal）下 GetConsoleWindow() 恒为 0，不能用它判断
+      "有无控制台"；改用 GetStdHandle+GetConsoleMode（真控制台句柄才有效），
+      AttachConsole 报 ERROR_ACCESS_DENIED 也说明本进程已带控制台。
+    - Textual 的 Windows 驱动输出读 sys.__stdout__、输入读
+      GetStdHandle(STD_INPUT_HANDLE)，故附加成功后须 SetStdHandle 三件套
+      并同时重绑 sys.stdout / sys.__stdout__。
+
+    环境变量 VIDEO_WATERMARK_TUI_DEBUG=1 时把判定过程写到
+    %TEMP%/video_watermark_tui_debug.log（排查附加问题用）。
     """
     if sys.platform != "win32":
         return True
     import ctypes
+    from ctypes import wintypes
 
     k32 = ctypes.windll.kernel32
-    if not k32.GetConsoleWindow():
-        ATTACH_PARENT_PROCESS = -1
-        if not k32.AttachConsole(ATTACH_PARENT_PROCESS):
-            return False
-        # 附加后重定向标准流到该控制台设备
+    debug: list[str] = []
+
+    def _log(msg: str) -> None:
+        debug.append(msg)
+
+    def _flush(ok: bool) -> None:
+        if not os.environ.get("VIDEO_WATERMARK_TUI_DEBUG"):
+            return
         try:
-            sys.stdout = open("CONOUT$", "w", encoding="utf-8", closefd=False)
-            sys.stderr = open("CONOUT$", "w", encoding="utf-8", closefd=False)
-            sys.stdin = open("CONIN$", "r", encoding="utf-8", closefd=False)
-        except OSError:
-            return False
+            path = os.path.join(
+                os.environ.get("TEMP", os.getcwd()),
+                "video_watermark_tui_debug.log")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(f"ok={ok} " + " | ".join(debug) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 1) stdout 已是控制台句柄（控制台子系统 python / bat 启动路径）——直接用
+    STD_OUTPUT_HANDLE = -11  # pylint: disable=invalid-name
+    k32.GetStdHandle.restype = wintypes.HANDLE
+    hout = k32.GetStdHandle(wintypes.DWORD(STD_OUTPUT_HANDLE))
+    if hout not in (None, 0, wintypes.HANDLE(-1).value):
+        mode = wintypes.DWORD()
+        if k32.GetConsoleMode(hout, ctypes.byref(mode)):
+            _log("stdout 已是控制台句柄")
+            _flush(True)
+            return True
+    _log(f"stdout 非控制台句柄 ({hout})")
+
+    # 2) 沿祖先链附加：跳过无控制台的 GUI 引导器，找到宿主终端
+    STD_INPUT_HANDLE, STD_ERROR_HANDLE = -10, -12  # pylint: disable=invalid-name
+    GENERIC_READ, GENERIC_WRITE = 0x80000000, 0x40000000  # pylint: disable=invalid-name
+    FILE_SHARE_READ, FILE_SHARE_WRITE = 1, 2  # pylint: disable=invalid-name
+    OPEN_EXISTING = 3  # pylint: disable=invalid-name
+    ERROR_ACCESS_DENIED = 5  # pylint: disable=invalid-name
+
+    k32.AttachConsole.restype = wintypes.BOOL
+    k32.CreateFileW.restype = wintypes.HANDLE
+
+    attached = None
+    already_console = False
+    for pid, name in _ancestor_chain(k32):
+        k32.AttachConsole.argtypes = [wintypes.DWORD]
+        if k32.AttachConsole(wintypes.DWORD(pid)):
+            attached = (pid, name)
+            _log(f"AttachConsole 成功: {name}({pid})")
+            break
+        err = k32.GetLastError()
+        if err == ERROR_ACCESS_DENIED:
+            # 本进程已带控制台（ConPTY 下 GetConsoleWindow 不可用，以此兜底）
+            already_console = True
+            _log(f"已有控制台（ACCESS_DENIED @ {name}({pid})）")
+            break
+        _log(f"跳过 {name}({pid}) err={err}")
+
+    if attached is None and not already_console:
+        _log("祖先链无可附加控制台")
+        _flush(False)
+        return False
+
+    # 3) 接好标准句柄：Win32 槽位（Textual 输入线程走 GetStdHandle）+ Python 流
+    conout = k32.CreateFileW("CONOUT$", GENERIC_WRITE | GENERIC_READ,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, None,
+                             OPEN_EXISTING, 0, None)
+    conin = k32.CreateFileW("CONIN$", GENERIC_READ | GENERIC_WRITE,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE, None,
+                            OPEN_EXISTING, 0, None)
+    if conout in (None, 0, wintypes.HANDLE(-1).value) or \
+            conin in (None, 0, wintypes.HANDLE(-1).value):
+        _log(f"CreateFileW 控制台设备失败 out={conout} in={conin}")
+        _flush(False)
+        return False
+    k32.SetStdHandle(wintypes.DWORD(STD_OUTPUT_HANDLE), conout)
+    k32.SetStdHandle(wintypes.DWORD(STD_ERROR_HANDLE), conout)
+    k32.SetStdHandle(wintypes.DWORD(STD_INPUT_HANDLE), conin)
+    try:
+        out_f = open("CONOUT$", "w", encoding="utf-8")
+        err_f = open("CONOUT$", "w", encoding="utf-8")
+        in_f = open("CONIN$", "r", encoding="utf-8")
+    except OSError as exc:
+        _log(f"重绑定标准流出错: {exc}")
+        _flush(False)
+        return False
+    sys.stdout = out_f
+    sys.stderr = err_f
+    sys.stdin = in_f
+    # Textual Windows 驱动读 sys.__stdout__/__stderr__（而非 sys.stdout），
+    # enable_application_mode() 还会立即对 sys.__stdin__ 查询控制台模式——
+    # 三者都要接好，缺 __stdin__ 会在驱动启动时 AttributeError（v0.5.1 修复）
+    sys.__stdout__ = out_f
+    sys.__stderr__ = err_f
+    sys.__stdin__ = in_f
+    _flush(True)
     return True
+
+
+def _ancestor_chain(k32, max_levels: int = 10):
+    """当前进程的祖先链 [(pid, 进程名), …]，从直接父进程开始。"""
+    import ctypes
+    from ctypes import wintypes
+
+    TH32CS_SNAPPROCESS = 0x2  # pylint: disable=invalid-name
+
+    class _PROCESSENTRY32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+            ("szExeFile", ctypes.c_char * 260),
+        ]
+
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snap in (None, 0, wintypes.HANDLE(-1).value):
+        return []
+    table = {}
+    pe = _PROCESSENTRY32()
+    pe.dwSize = ctypes.sizeof(_PROCESSENTRY32)
+    ok = k32.Process32First(snap, ctypes.byref(pe))
+    while ok:
+        table[pe.th32ProcessID] = (
+            pe.th32ParentProcessID,
+            pe.szExeFile.decode(errors="replace"))
+        ok = k32.Process32Next(snap, ctypes.byref(pe))
+    k32.CloseHandle(snap)
+
+    pid = k32.GetCurrentProcessId()
+    chain_pids = []
+    for _ in range(max_levels):
+        if pid not in table:
+            break
+        chain_pids.append(pid)
+        pid = table[pid][0]
+    # 排除自身，pid 与进程名一一对应（日志显示用）
+    return [(p, table[p][1]) for p in chain_pids[1:]]
 
 
 def main() -> int:

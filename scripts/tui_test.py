@@ -258,6 +258,37 @@ async def run_tests() -> None:
             check("端到端导出完成", ok)
             check("输出文件有效", out8.is_file() and out8.stat().st_size > 1000)
 
+    # ---------- 9. 布局回归（v0.5.1：行内溢出 / 底部按钮可达 / resize） ----------
+    from textual.containers import Horizontal  # noqa: E402
+
+    print("== 9. 布局回归（行内溢出 / 底部按钮） ==")
+    app6 = WatermarkTuiApp()
+
+    async def check_form_layout(tag: str) -> None:
+        form = app6.query_one("#form")
+        check(f"[{tag}] #form 无横向溢出", form.max_scroll_x == 0)
+        over = []
+        for row in form.query(Horizontal):
+            over += [c for c in row.children
+                     if c.region.right > row.region.right]
+        check(f"[{tag}] 行内子件不越界", not over,
+              str([(type(c).__name__, c.id) for c in over]))
+        form.scroll_to(y=form.max_scroll_y, animate=False)
+        await pilot6.pause(0.15)
+        text = "\n".join(s.text
+                         for s in app6.screen._compositor.render_strips())
+        check(f"[{tag}] 滚到底可见底部按钮", "加载配置" in text)
+
+    async with app6.run_test(size=(171, 43)) as pilot6:
+        await pilot6.pause(0.2)
+        await check_form_layout("171x43")
+        await pilot6.resize_terminal(120, 30)
+        await pilot6.pause(0.3)
+        await check_form_layout("120x30")
+        await pilot6.resize_terminal(90, 26)
+        await pilot6.pause(0.3)
+        await check_form_layout("90x26")
+
 
 async def wait_screen_type(app, screen_cls, timeout_s: float) -> bool:
     for _ in range(int(timeout_s / 0.1)):

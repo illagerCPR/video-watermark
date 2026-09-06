@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from ..core import ffbin
 from ..core import preview
 from ..core.encoder import probe, process
-from ..core.hwaccel import describe_available
+from ..core.hwaccel import describe_available, detect_encoders
 from ..core.subproc import popen as popen_hidden  # 隐藏窗口启动 explorer（避免闪命令窗）
 from ..core.watermark import list_available_fonts
 from ..models import (
@@ -39,6 +39,19 @@ _SETTINGS_APP = "VideoWatermark"
 FF_MODE_AUTO = "auto"          # 自动（推荐）：交给 ffbin 解析层决策
 FF_MODE_INTERNAL = "internal"  # 强制使用内置二进制
 FF_MODE_CUSTOM = "custom"      # 使用自定义路径
+
+
+def _wrap_grow(label: QLabel) -> QLabel:
+    """自动换行标签：打开 sizePolicy 的 heightForWidth 标志。
+
+    QLabel 默认的 sizePolicy 不带该标志，QFormLayout/QHBoxLayout 计算行高时
+    只用 sizeHint 而不按当前宽度查询 heightForWidth——动态 setText 成多行
+    （如长路径换行）后行高不够，文字会压到相邻控件上（v0.5.1 修复）。
+    """
+    sp = label.sizePolicy()
+    sp.setHeightForWidth(True)
+    label.setSizePolicy(sp)
+    return label
 
 
 def load_ffmpeg_setting() -> tuple[str, str]:
@@ -305,6 +318,7 @@ class MainWindow(QMainWindow):
         crf_hint = QLabel("CRF 越低质量越高、文件越大（0~51，推荐 18~28）")
         crf_hint.setStyleSheet("color:#888; font-size:11px;")
         crf_hint.setWordWrap(True)
+        _wrap_grow(crf_hint)
         ol.addRow(crf_hint)
 
         self.preset_combo = QComboBox()
@@ -316,6 +330,7 @@ class MainWindow(QMainWindow):
         preset_hint = QLabel("越快的预设编码越快、文件略大（ultrafast~veryslow）")
         preset_hint.setStyleSheet("color:#888; font-size:11px;")
         preset_hint.setWordWrap(True)
+        _wrap_grow(preset_hint)
         ol.addRow(preset_hint)
 
         self.scale_spin = self._dspin(0.1, 2.0, 1.0, 0.05)
@@ -323,6 +338,7 @@ class MainWindow(QMainWindow):
         scale_hint = QLabel("1.0 = 原分辨率；0.5 = 缩小一半；2.0 = 放大一倍")
         scale_hint.setStyleSheet("color:#888; font-size:11px;")
         scale_hint.setWordWrap(True)
+        _wrap_grow(scale_hint)
         ol.addRow(scale_hint)
 
         # 硬件加速（GPU 编码/解码）
@@ -370,21 +386,32 @@ class MainWindow(QMainWindow):
         self.ff_status_label = QLabel("")
         self.ff_status_label.setStyleSheet("color:#888; font-size:11px;")
         self.ff_status_label.setWordWrap(True)
+        _wrap_grow(self.ff_status_label)
         ol.addRow(self.ff_status_label)
 
         hw_info_row = QHBoxLayout()
         self.hw_info_label = QLabel("可用硬件编码器将在生成或点击检测时自动识别")
         self.hw_info_label.setStyleSheet("color:#888; font-size:11px;")
         self.hw_info_label.setWordWrap(True)
+        _wrap_grow(self.hw_info_label)
         detect_btn = QPushButton("检测")
         detect_btn.setToolTip("探测当前机器的可用硬件编码器")
         detect_btn.clicked.connect(self._detect_hw)
         hw_info_row.addWidget(self.hw_info_label, 1)
         hw_info_row.addWidget(detect_btn)
         ol.addRow(hw_info_row)
+        # 多行检测结果独立成行：与按钮同处 QHBoxLayout 的换行 QLabel 行高不可靠，
+        # 长路径换行后会压到上下控件（v0.5.1 修复，见 _detect_hw）
+        self.hw_detail_label = QLabel("")
+        self.hw_detail_label.setStyleSheet("color:#888; font-size:11px;")
+        self.hw_detail_label.setWordWrap(True)
+        _wrap_grow(self.hw_detail_label)
+        self.hw_detail_label.setVisible(False)
+        ol.addRow(self.hw_detail_label)
         hw_hint = QLabel("硬件编码可大幅加速导出（NVENC/QSV/AMF）；无 GPU 时自动回退 CPU 编码")
         hw_hint.setStyleSheet("color:#888; font-size:11px;")
         hw_hint.setWordWrap(True)
+        _wrap_grow(hw_hint)
         ol.addRow(hw_hint)
         lay.addWidget(out_box)
 
@@ -401,6 +428,7 @@ class MainWindow(QMainWindow):
 
         self.info_label = QLabel("请选择输入视频")
         self.info_label.setWordWrap(True)
+        _wrap_grow(self.info_label)
         lay.addWidget(self.info_label)
 
         ctrl = QHBoxLayout()
@@ -438,6 +466,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.progress_bar)
         self.progress_status = QLabel("")
         self.progress_status.setWordWrap(True)
+        _wrap_grow(self.progress_status)
         self.progress_status.setStyleSheet("color:#888; font-size:12px;")
         self.progress_status.setVisible(False)
         lay.addWidget(self.progress_status)
@@ -682,14 +711,26 @@ class MainWindow(QMainWindow):
             self._on_ff_path_edited()
 
     def _detect_hw(self):
-        """探测当前机器可用的硬件编码器并显示结果（附当前使用的二进制）。"""
+        """探测当前机器可用的硬件编码器并显示结果（附当前使用的二进制）。
+
+        多行结果写入独立整行的 hw_detail_label：与「检测」按钮同处一个
+        QHBoxLayout 的换行 QLabel 在长文本（如打包后的长 ffmpeg 路径）换行时
+        行高撑不开、文字压到相邻控件（v0.5.1 修复）；同行 hw_info_label 只放
+        单行摘要。
+        """
+        self.hw_detail_label.setVisible(True)
         try:
             text = describe_available()
             info = ffbin.info()
             text += f"\n当前 ffmpeg：{info['exe']}（{info['source']}）"
-            self.hw_info_label.setText(text)
+            self.hw_detail_label.setText(text)
+            avail = detect_encoders()
+            self.hw_info_label.setText(
+                "检测完成"
+                if avail else "检测完成：未检测到硬件编码器（回退 CPU 编码）")
         except Exception as exc:  # noqa: BLE001
-            self.hw_info_label.setText(f"检测失败：{exc}")
+            self.hw_info_label.setText("检测失败：")
+            self.hw_detail_label.setText(str(exc))
 
     def _on_preview(self):
         input_path = self.input_edit.text()

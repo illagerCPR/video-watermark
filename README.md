@@ -52,9 +52,10 @@
 - **半块像素预览**：任意时间点的水印合成帧 + 移动轨迹示意，直接渲染在终端内（F5/F6）
 - **交互式导出**：帧进度 + 平滑速率 + ETA + 一键取消（F7），后台线程渲染不卡界面
 - **配置文件**：`--config` 预载 / 界面内加载保存（与 GUI/CLI 完全互通的 JSON）
-- **单 exe 双模式**：Windows exe 支持 `--tui` 参数（自动附加控制台）；双击启动仍为 GUI
+- **单 exe 双模式**：Windows exe 支持 `--tui` 参数（自动附加当前终端控制台，Windows Terminal / PowerShell / cmd 均可，v0.5.1 修复附加逻辑）；双击启动（无控制台）弹提示后退出（退出码 2），仍为 GUI 入口
 - **入口**：`python -m app.tui`、`python -m app.cli --tui`、Linux `./启动.sh --tui`、Windows `启动-tui.bat`
 - **按键**：`F5` 预览帧+轨迹 · `F6` 轨迹示意 · `F7` 开始导出 · `Ctrl+S` 保存配置 · `Esc` 返回/取消 · `Ctrl+Q` 退出
+- **排查**：exe `--tui` 启动异常时，设环境变量 `VIDEO_WATERMARK_TUI_DEBUG=1` 再运行，判定过程会追加到 `%TEMP%\video_watermark_tui_debug.log`
 
 ## 🚀 快速开始
 
@@ -75,7 +76,7 @@
 
 ### 方式一 · B：TUI 终端模式（v0.5.0 起）
 
-- **Windows**：双击 **`启动-tui.bat`**（或在终端运行 `.venv\Scripts\python.exe -m app.tui`；打包版 `VideoWatermark.exe --tui`）
+- **Windows**：双击 **`启动-tui.bat`**（或在终端运行 `.venv\Scripts\python.exe -m app.tui`；打包版在 PowerShell/cmd/Windows Terminal 里运行 `VideoWatermark.exe --tui`，v0.5.1 起已支持 Windows Terminal）
 - **Linux / macOS**：`./启动.sh --tui`
 - 按键：`F5` 预览帧+轨迹 · `F6` 轨迹示意 · `F7` 开始导出 · `Ctrl+S` 保存配置 · `Esc` 返回/取消 · `Ctrl+Q` 退出
 
@@ -191,13 +192,13 @@ rem Windows
 rem Windows（PowerShell）
 .venv\Scripts\python.exe scripts\smoke_test.py          rem 轨迹/渲染逻辑
 .venv\Scripts\python.exe scripts\verify_ffbin.py        rem ffmpeg 二进制解析层专项
-.venv\Scripts\python.exe scripts\tui_test.py            rem TUI 全流程（Pilot 无终端自动化）
+.venv\Scripts\python.exe scripts\tui_test.py            rem TUI 全流程（Pilot 无终端自动化；含布局回归）
 .venv\Scripts\python.exe scripts\verify_step1.py        rem 像素级成品验证
 .venv\Scripts\python.exe scripts\verify_hw.py           rem GPU 硬件加速专项
 .venv\Scripts\python.exe scripts\verify_pipeline.py     rem 并行流水线专项
 .venv\Scripts\python.exe scripts\verify_time_range.py   rem 时间范围验证
 .venv\Scripts\python.exe scripts\verify_audio.py        rem 音频保留验证
-.venv\Scripts\python.exe scripts\gui_smoke.py           rem GUI 离屏冒烟
+.venv\Scripts\python.exe scripts\gui_smoke.py           rem GUI 离屏冒烟（含检测信息布局回归）
 .venv\Scripts\python.exe scripts\gui_export_test.py     rem GUI 导出端到端（含帧级进度断言）
 .venv\Scripts\python.exe scripts\step3_export_test.py   rem 编码参数端到端
 .venv\Scripts\python.exe scripts\step4_batch_test.py    rem 批量端到端（并行+串行，含帧级进度断言）
@@ -235,12 +236,12 @@ rem Windows（PowerShell）
 - **Linux 如何启用 GPU 硬件编码（v0.3.2 起）**：安装系统 ffmpeg（`sudo apt install ffmpeg`，发行版默认含 NVENC/QSV 编译支持），程序检测到其具备硬件编码器后会**自动切换**使用；WSL2 同样适用（需 NVIDIA 驱动直通）。也可 `--ffmpeg /路径/ffmpeg` 指定任意二进制（如 [BtbN 构建](https://github.com/BtbN/FFmpeg-Builds/releases)，内置 NVENC/QSV/VAAPI）。AMD 显卡在 Linux 上需 VAAPI 滤镜链，暂未支持，会回退 CPU。
 - **Linux 下没有系统 ffmpeg 会怎样**：继续使用内置静态二进制，全部功能正常（零依赖），仅无 GPU 硬件编码（回退 libx264）。
 - **Linux 字体下拉为空 / 中文变方框**：确保安装了中文字体（如 `fonts-noto-cjk`、`fonts-wqy-microhei`），软件会自动递归枚举并默认选用可用的中文字体。
+- **Windows Terminal 里运行 `VideoWatermark.exe --tui` 弹"请从命令行启动"提示**：v0.5.1 已修复（此前控制台附加逻辑在 Windows Terminal 的 ConPTY 环境下失效）。若双击启动（无控制台），仍会提示后退出（退出码 2），属预期；排查可设 `VIDEO_WATERMARK_TUI_DEBUG=1` 看判定日志。
 
 ## ⚠️ 已知限制
 
 - **VAAPI 硬件编码暂不支持（AMD Linux）**：AMD 显卡在 Linux 上的硬件编码（`h264_vaapi`/`hevc_vaapi`）需要 `-init_hw_device` 设备初始化与 `hwupload` 滤镜链，尚未实现；AMD Linux 用户当前自动回退 CPU 编码（libx264），后续计划以实验性参数（`--hw-encoder vaapi`）提供
 - **Linux 硬件解码收益有限**：`-hwaccel auto` 在"解码后读回软件帧"的管线中，vaapi/cuda 路径多数情况会失败并自动回退软件解码（功能正常，仅解码加速收益有限）；硬件解码加速主要在 Windows 生效
-- **Linux 暂无 AppImage**：当前以 tar.gz 分发，运行 GUI 仍需系统图形库（xcb 等，多数桌面发行版自带）
 - **QSV/核显场景**：Intel QSV 硬件编码在 Windows 与 Linux（系统 ffmpeg + 驱动就绪）均可自动使用；无驱动环境自动回退 CPU，不影响功能
 
 ## 📄 许可
