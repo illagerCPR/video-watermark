@@ -1,4 +1,4 @@
-"""视频读写与编码：基于 imageio-ffmpeg 内置静态 ffmpeg，免系统安装。
+"""视频读写与编码：ffmpeg 二进制经 ffbin 解析层选定（默认内置静态版，免系统安装）。
 
 - probe()           探测视频宽高 / 帧率 / 时长
 - process()         读输入帧 -> 合成水印 -> 编码输出（带进度回调）
@@ -19,6 +19,7 @@ import imageio_ffmpeg
 
 from ..models import WatermarkConfig
 from .compositor import WatermarkCompositor
+from .ffbin import get_ffmpeg_exe as _resolve_ffmpeg_exe
 from .hwaccel import build_decode_input_params, resolve_encode
 from .subproc import run as run_hidden  # 隐藏窗口启动 ffmpeg（避免 GUI 闪命令窗）
 
@@ -26,8 +27,13 @@ ProgressCB = Optional[Callable[[int, int], None]]  # (done, total)
 
 
 def get_ffmpeg_exe() -> str:
-    """返回内置 ffmpeg 可执行文件路径；首次使用会自动下载静态二进制。"""
-    return imageio_ffmpeg.get_ffmpeg_exe()
+    """返回实际使用的 ffmpeg 可执行文件路径（经 ffbin 解析层，见 ffbin.py）。
+
+    默认为 imageio-ffmpeg 内置静态二进制（免系统安装）；Linux 上若内置
+    二进制缺硬件编码器而系统 ffmpeg 具备，自动切换到系统 ffmpeg；可用
+    CLI `--ffmpeg` / 环境变量 VIDEO_WATERMARK_FFMPEG 显式指定。
+    """
+    return _resolve_ffmpeg_exe()
 
 
 # ---------------------------------------------------------------------------

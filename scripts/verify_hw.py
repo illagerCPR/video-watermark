@@ -19,11 +19,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import imageio_ffmpeg  # noqa: E402
-
 from app.core import hwaccel  # noqa: E402
 from app.core.encoder import (  # noqa: E402
-    generate_sample_logo, generate_sample_video, process,
+    generate_sample_logo, generate_sample_video, get_ffmpeg_exe, process,
 )
 from app.models import KIND_TEXT, MODE_TILED, WatermarkConfig  # noqa: E402
 
@@ -41,7 +39,7 @@ def check(name, cond, detail=""):
 
 
 def has_audio(path) -> bool:
-    exe = imageio_ffmpeg.get_ffmpeg_exe()
+    exe = get_ffmpeg_exe()  # 经 ffbin 解析层，与被测编码路径一致
     r = subprocess.run([exe, "-i", str(path)], capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
     return "Audio:" in r.stderr

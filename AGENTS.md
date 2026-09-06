@@ -10,15 +10,16 @@
 - 依赖见 `requirements.txt`：Pillow、imageio-ffmpeg、PySide6。
 - pip 直连官方源在部分环境会挂（如 PySide6_Addons 大包），安装失败时用清华镜像：
   `pip install -i https://pypi.tuna.tsinghua.edu.cn/simple <pkg>`。
-- 本机**没有**系统 ffmpeg；一切 ffmpeg 调用必须经 `imageio_ffmpeg.get_ffmpeg_exe()` 获取内置二进制路径（打包时通过 `collect_data_files("imageio_ffmpeg")` 一并内置）。
+- ffmpeg 二进制经 `app/core/ffbin.py` 统一解析（默认内置静态二进制，Linux 可自动/显式切换系统 ffmpeg，见核心架构）；打包时内置二进制通过 `collect_data_files("imageio_ffmpeg")` 一并内置，自检的 `ffbin.bundled_exe()` 独立验证打包完整性。
 - **Linux 适配（v0.3.0）**：Linux 上若缺 ensurepip，`启动.sh` 会自动回退 `--without-pip` + `get-pip.py` 引导；字体层已支持 Linux（递归枚举 + 思源黑体/文泉驿候选，见 `watermark.py`）；GUI 缺 xcb 库时报错须提示装系统库（`libxcb-cursor0` 等）。
 
 ## 入口
 
 - GUI：项目根目录 `python -m app.main`（Windows 双击 `启动.bat`、Linux/macOS 运行 `./启动.sh`，均会自动建 venv+装依赖）。
-- 命令行：`python -m app.cli --input in.mp4 --output out.mp4 [--mode tiled|motion] [--kind text|image] [--text|--image] [--angle] [--trajectory] [--set k=v] [--crf --preset --scale] [--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf] [--hw-codec h264|hevc] [--no-hw-decode]`。
+- 命令行：`python -m app.cli --input in.mp4 --output out.mp4 [--mode tiled|motion] [--kind text|image] [--text|--image] [--angle] [--trajectory] [--set k=v] [--crf --preset --scale] [--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf] [--hw-codec h264|hevc] [--no-hw-decode] [--ffmpeg PATH|internal]`。
   - `--set k=v` 覆盖 `WatermarkConfig` 任意字段（可重复）；`--print-config` 打印完整配置 JSON。
   - `--hw-encoder` 默认 `auto`（自动选可用硬件编码器，无 GPU 回退 libx264）；`--hw-codec` 仅硬件编码时生效；`--no-hw-decode` 禁用硬件解码（默认开 `-hwaccel auto`，失败自动回退软解）。
+  - `--ffmpeg`（v0.3.1）：指定 ffmpeg 可执行文件路径（Linux 上可用系统 ffmpeg / BtbN 构建获得硬件编码）或 `internal` 强制内置；亦可设环境变量 `VIDEO_WATERMARK_FFMPEG`。CLI 启动会打印实际选用的二进制与理由。
 - 打包自检：`dist\VideoWatermark.exe --selftest`（Windows）/ `dist/VideoWatermark --selftest`（Linux）（离屏建窗+编码验证，退出码 0 = 正常）。
 
 ## 核心架构（数据流）
@@ -29,6 +30,7 @@
 - `app/core/compositor.py` — `WatermarkCompositor` 逐帧 `apply(frame_rgb, t)`，含时间范围门控、自转。
 - `app/core/encoder.py` — `probe()` 解析分辨率/帧率/时长/是否有音频；`process()` 读帧→合成→编码输出→**合并音频**。`process()` 支持**并行帧流水线**（`parallel` 参数：0=自动按 CPU 核数 2~4、1=串行、N=指定）：`_run_serial` 串行、`_run_pipelined` 多线程（主线程读帧 → N 个 worker 线程并行合成 → 独立写线程按帧序号保序喂给 ffmpeg，有界队列背压）。串行与并行输出**字节级一致**（合成逻辑相同、仅交付方式不同）。
 - `app/core/preview.py` — 单帧预览渲染、轨迹示意图。
+- `app/core/ffbin.py` — **ffmpeg 二进制解析层（v0.3.1）**：统一决定全项目用哪个 ffmpeg，经 imageio-ffmpeg 官方覆写点 `IMAGEIO_FFMPEG_EXE` 生效（编码/探测调用零改动）。优先级：用户已设 IMAGEIO_FFMPEG_EXE > 显式指定（CLI `--ffmpeg` / 环境变量 `VIDEO_WATERMARK_FFMPEG`，`internal`=强制内置，路径无效直接报错不回退）> 自动选择（内置缺硬件编码器时，探测系统 ffmpeg 若带 nvenc/qsv/amf/mf/d3d12va 则切换；否则维持内置）。决策进程内缓存，详情 `ffbin.info()`；自动分支异常一律回退内置，绝不影响启动。
 - `app/ui/` — `main_window.py`（主窗口+RenderWorker QThread）、`batch_dialog.py`（批量处理）。
 
 ## 编码器关键陷阱（改这里必读）
@@ -44,7 +46,7 @@
 
 - `app/core/hwaccel.py` 统一负责硬件编码：`detect_encoders()`（对每个候选做极短样片实测编码，结果 `lru_cache`）、`resolve_encode()`（统一 CRF/预设 → 各家参数，回退 libx264）、`build_decode_input_params()`。
 - 内置 ffmpeg v7.1（Windows 版）自带 `h264/hevc/av1_nvenc`、`h264/hevc_qsv`、`h264/hevc_amf`、`hevc_d3d12va`、`h264/hevc_mf`，**零新增依赖/二进制**；打包不受影响。
-- **Linux 版内置 ffmpeg 未编译任何硬件编码器**（`-encoders` 中无 `*_nvenc/_qsv/_amf/_d3d12va/_mf`，v0.3.0 实测）：Linux 上 `detect_encoders()` 恒返回 `{}`，`auto` 静默回退 libx264，显式指定按设计报错——**属预期行为，勿当 bug 修**。探测流程先比对 `-encoders` 名单再实测，未编译候选零成本跳过，注册表无需按平台裁剪。
+- **Linux 版内置 ffmpeg 未编译任何硬件编码器**（`-encoders` 中无 `*_nvenc/_qsv/_amf/_d3d12va/_mf`，v0.3.0 实测）：v0.3.1 起 `ffbin.py` 会在此场景**自动探测系统 ffmpeg**，若其带硬件编码器则切换使用（探测缓存键含二进制路径，切换自动失效重测）；无系统 ffmpeg 或其也无硬件编码器时维持内置，`auto` 回退 libx264。
 - 探测结果缓存路径：Windows `%APPDATA%/VideoWatermark/`；Linux/macOS `~/.config/VideoWatermark/`（XDG_CONFIG_HOME 优先）。
 - `process(...)` 新增参数：`hw_encoder="auto"`（auto/none/nvenc/qsv/amf/d3d12va/mf）、`hw_codec="h264"`、`hw_decode=True`（`-hwaccel auto`，头部解析失败自动回退软解）。返回 dict 新增 `codec` 键。
 - `write_frames(...)` 必须传 `quality=None`：否则非 libx264 编码器会被追加 `-qscale:v`（旧代码隐式叠加 `-crf 25` 只是被后置参数覆盖）。
@@ -67,7 +69,7 @@
 - 文字水印白底看不见——验收/演示须设 `stroke_width>=2` 描边。
 - PowerShell 下 Qt 字体警告写 stderr 会被当 exit code 1，**属误报**，看脚本内打印的 "全部通过" 判定。
 - **批量并行用 `ProcessPoolExecutor`（Windows spawn）**：任何会被进程池子进程导入的脚本/入口必须带 `if __name__ == "__main__":` 保护，否则子进程会重执行顶层代码递归（`step4_batch_test.py` 已按此改造）。Python 3.14 在 Linux 默认启动方式为 forkserver（Windows 仍 spawn），保护要求同样满足（v0.3.0 Linux 实测通过）。
-- **Linux 平台预期差异（勿当 bug）**：`verify_hw.py` 的"探测含 nvenc"与"至少一个硬件编码器实跑"、`verify_pipeline.py` 的 GPU 编码断言在 Linux 会 FAIL——根因是 Linux 版内置 ffmpeg 无硬件编码器，其余全部路径应通过。
+- **Linux 硬件编码可用性随环境而变（v0.3.1 起）**：`verify_hw.py`/`verify_pipeline.py` 的 GPU 断言结果取决于 ffbin 最终选定的二进制——有带硬件编码器的系统 ffmpeg（或 `--ffmpeg`/`VIDEO_WATERMARK_FFMPEG` 指定）+ GPU 驱动时全过（WSL2 + RTX 4050 + 系统 ffmpeg 4.4 实测 nvenc 全过）；纯内置二进制的 Linux 则 GPU 断言 FAIL（其余路径应通过），属预期。
 
 ## 打包与发布
 

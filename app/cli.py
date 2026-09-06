@@ -94,8 +94,21 @@ def main(argv=None) -> int:
     p.add_argument("--parallel", type=int, default=0, metavar="N",
                    help="帧流水线并行 worker 数：0=自动（默认，按 CPU 核数）、"
                         "1=串行、N=指定（如 4）")
+    p.add_argument("--ffmpeg", default=None, metavar="PATH|internal",
+                   help="指定 ffmpeg 可执行文件路径（Linux 上可指向带硬件编码器"
+                        "的二进制，如系统 ffmpeg 或 BtbN 构建；internal=强制内置）")
     p.add_argument("--print-config", action="store_true", help="打印最终配置后退出")
     args = p.parse_args(argv)
+
+    # --ffmpeg 写入环境变量，由 ffbin 解析层统一生效（须在任何 ffmpeg 调用前）
+    import os
+    if args.ffmpeg:
+        os.environ["VIDEO_WATERMARK_FFMPEG"] = args.ffmpeg
+    from .core import ffbin
+    ffbin.get_ffmpeg_exe()
+    _fi = ffbin.info()
+    print(f"ffmpeg: {_fi['exe']}  [{_fi['source']}]"
+          + (f"  {_fi['note']}" if _fi["note"] else ""))
 
     cfg = build_config(args)
     if args.print_config:

@@ -32,7 +32,7 @@
 - **硬件解码**：启用 `-hwaccel auto` 加速解码，驱动不兼容时自动回退软件解码
 - **一键检测**：GUI 内可实时探测当前机器的可用硬件编码器
 - 编码器/解码能力**零新增依赖**（复用内置静态 ffmpeg），打包体积不变
-- ⚠️ 平台差异（v0.3.0 起）：硬件编码器仅 **Windows** 版内置 ffmpeg 提供；Linux 版二进制不含任何硬件编码器，`auto` 会直接回退 libx264（显式指定会按设计报错）
+- **Linux GPU 支持（v0.3.1 起）**：Linux 版内置 ffmpeg 不含硬件编码器，程序会**自动检测系统 ffmpeg**（如 `apt install ffmpeg`），若其具备硬件编码器则自动切换使用（NVIDIA/Intel 显卡开箱即得 GPU 加速）；也可用 `--ffmpeg` 手动指定任意二进制（如 BtbN 构建）。无系统 ffmpeg 或无 GPU 时仍回退 CPU，零依赖不受影响
 
 ### 5. ⚡ 并行帧流水线（v0.2.0-rc 起）
 - **单视频导出提速**：读帧 / 合成 / 写入三阶段多线程解耦，1080p 实测约 **2.2 倍**提速
@@ -44,7 +44,7 @@
 - **字体自动适配**：Windows 使用微软雅黑 / 黑体 / 宋体等；Linux 自动递归枚举系统字体（含子目录），默认选用思源黑体（Noto Sans CJK）/ 文泉驿等常见中文字体
 - **一键启动脚本**：Windows `启动.bat`、Linux/macOS `启动.sh`（自动建 venv、装依赖、缺库提示）
 - **CI 双平台构建**：GitHub Actions 自动构建 Windows exe 与 Linux 单文件可执行文件（推 tag 即发布）
-- 注意：Linux 版内置 ffmpeg 未编译硬件编码器，GPU 加速在该平台自动回退 CPU（libx264），功能不受影响
+- **ffmpeg 二进制解析层（v0.3.1 起）**：优先用内置二进制（零依赖）；Linux 上内置版无硬件编码器时自动探测并切换到带硬件编码器的系统 ffmpeg；支持 `--ffmpeg` 显式指定与环境变量 `VIDEO_WATERMARK_FFMPEG` 覆盖
 
 ## 🚀 快速开始
 
@@ -96,6 +96,8 @@ rem GPU 硬件加速（默认 auto 自动选可用硬件编码器，无 GPU 回�
 > Linux / macOS 下将 `.venv\Scripts\python.exe` 换为 `.venv/bin/python`，行继续符 `^` 换为 `\`，注释 `rem` 换为 `#`。
 
 可用参数与默认值见 `app/models.py` 中的 `WatermarkConfig`；`--print-config` 可打印完整配置 JSON。
+GPU 相关：`--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf`、`--hw-codec h264|hevc`、`--no-hw-decode`、`--parallel N`。
+ffmpeg 二进制：`--ffmpeg PATH|internal`（Linux 上内置版无硬件编码器时默认自动探测系统 ffmpeg；`PATH` 显式指定任意二进制，`internal` 强制用内置版；也可设环境变量 `VIDEO_WATERMARK_FFMPEG`，GUI 用户可用后者）。
 GPU 相关：`--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf`、`--hw-codec h264|hevc`、`--no-hw-decode`、`--parallel N`。
 
 ## 🖱 界面使用说明
@@ -205,7 +207,8 @@ rem Windows（PowerShell）
 - **硬件编码没有更快？**：本软件瓶颈在 CPU 侧帧合成/管道而非编码器，GPU 编码主要用于**降低 CPU 负载**与 HEVC 输出；真正的墙钟提速来自内置的并行帧流水线（默认已启用）。若希望更快的单文件导出，可确认「硬件编码」为自动并适当调高 `--parallel`。
 - **提示"硬件编码器不可用"**：说明当前机器无对应 GPU 或驱动缺失，软件已自动回退 CPU 编码（libx264），不影响使用；可在「输出设置 → 检测」查看可用编码器。
 - **Linux 报 "could not load the Qt platform plugin xcb"**：缺系统图形库。Debian/Ubuntu：`sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1`；Fedora：`sudo dnf install xcb-util-cursor libxkbcommon-x11`。无显示环境（服务器）可用 `QT_QPA_PLATFORM=offscreen` 跑 CLI / 自检。
-- **Linux 下硬件加速无效**：属预期——Linux 版内置 ffmpeg 未编译硬件编码器，软件自动回退 CPU 编码；解码仍可用 `-hwaccel auto`（依赖系统驱动，失败自动回退软解）。
+- **Linux 如何启用 GPU 硬件编码（v0.3.1 起）**：安装系统 ffmpeg（`sudo apt install ffmpeg`，发行版默认含 NVENC/QSV 编译支持），程序检测到其具备硬件编码器后会**自动切换**使用；WSL2 同样适用（需 NVIDIA 驱动直通）。也可 `--ffmpeg /路径/ffmpeg` 指定任意二进制（如 [BtbN 构建](https://github.com/BtbN/FFmpeg-Builds/releases)，内置 NVENC/QSV/VAAPI）。AMD 显卡在 Linux 上需 VAAPI 滤镜链，暂未支持，会回退 CPU。
+- **Linux 下没有系统 ffmpeg 会怎样**：继续使用内置静态二进制，全部功能正常（零依赖），仅无 GPU 硬件编码（回退 libx264）。
 - **Linux 字体下拉为空 / 中文变方框**：确保安装了中文字体（如 `fonts-noto-cjk`、`fonts-wqy-microhei`），软件会自动递归枚举并默认选用可用的中文字体。
 
 ## 📄 许可

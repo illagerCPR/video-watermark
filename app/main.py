@@ -66,11 +66,13 @@ def main() -> int:
         win = MainWindow()
         ok = win.windowTitle() == "视频水印工具"
 
-        # 1) 内置 ffmpeg 二进制可用
-        import imageio_ffmpeg
+        # 1) 内置 ffmpeg 二进制可用（打包完整性独立验证，与 ffbin 解析无关）
+        from app.core import ffbin
 
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        ffmpeg_exe = ffbin.bundled_exe()
         ok = ok and os.path.isfile(ffmpeg_exe)
+        # 实际使用的 ffmpeg（可能是内置，也可能是显式/自动选定的系统 ffmpeg）
+        resolved = ffbin.get_ffmpeg_exe()
 
         # 2) 端到端：用内置 ffmpeg 生成短视频 -> 加水印 -> 编码输出
         from app.core.encoder import generate_sample_video, process
@@ -95,9 +97,13 @@ def main() -> int:
         with concurrent.futures.ProcessPoolExecutor(max_workers=1) as pool:
             ok = ok and pool.submit(_selftest_double, 21).result(timeout=60) == 42
 
-        print(f"SELFTEST_OK ffmpeg={ffmpeg_exe}" if ok else "SELFTEST_FAIL",
-              flush=True)
+        print(f"SELFTEST_OK ffmpeg={resolved} (bundled={ffmpeg_exe})"
+              if ok else "SELFTEST_FAIL", flush=True)
         return 0 if ok else 1
+
+    # 提前解析 ffmpeg 二进制（Linux 自动切换 / 显式指定），避免首个任务时才决策
+    from app.core import ffbin
+    ffbin.get_ffmpeg_exe()
 
     app = QApplication(sys.argv)
     app.setApplicationName("视频水印工具")

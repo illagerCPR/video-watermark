@@ -1,9 +1,10 @@
 """硬件加速支持：GPU 编码器探测、编码/解码参数生成。
 
-基于内置 imageio-ffmpeg 静态 ffmpeg。Windows 版二进制（v7.1+）自带
-NVENC / AMF / QSV / D3D12VA / MediaFoundation 硬件编码器；Linux 版
-二进制未编译任何硬件编码器（-encoders 中无 *_nvenc / *_qsv 等），
-因此在 Linux 上探测结果恒为空、auto 模式回退 libx264，属预期行为。
+基于经 ffbin 解析层选定的 ffmpeg 二进制（默认 imageio-ffmpeg 内置静态
+ffmpeg；Linux 上若内置版无硬件编码器而系统 ffmpeg 有，自动切换到系统
+ffmpeg，详见 ffbin.py）。Windows 版内置二进制（v7.1+）自带 NVENC / AMF /
+QSV / D3D12VA / MediaFoundation 硬件编码器；Linux 版内置二进制未编译任何
+硬件编码器——切换到带 *_nvenc/*_qsv 的系统 ffmpeg 后即可用 GPU 编码。
 本模块负责：
 
 - `detect_encoders()`  探测当前机器可用的硬件编码器（先比对 ffmpeg
@@ -29,8 +30,7 @@ import tempfile
 from dataclasses import dataclass
 from typing import Optional
 
-import imageio_ffmpeg
-
+from . import ffbin
 from .subproc import run as run_hidden  # 隐藏窗口启动 ffmpeg（避免 GUI 闪命令窗）
 
 # ---------------------------------------------------------------------------
@@ -75,22 +75,14 @@ HW_CODECS = ("h264", "hevc")
 
 
 def _ffmpeg_encoder_names() -> set[str]:
-    """从内置 ffmpeg 的 -encoders 输出中解析存在的编码器名集合。"""
-    exe = imageio_ffmpeg.get_ffmpeg_exe()
-    r = run_hidden([exe, "-hide_banner", "-encoders"],
-                   capture_output=True, text=True,
-                   encoding="utf-8", errors="replace")
-    names: set[str] = set()
-    for line in r.stdout.splitlines():
-        m = re.match(r"\s*\S+\s+(\S+)", line)  # 第二列为编码器名
-        if m:
-            names.add(m.group(1))
-    return names
+    """从实际使用的 ffmpeg（经 ffbin 解析层）的 -encoders 输出中解析编码器名集合。"""
+    exe = ffbin.get_ffmpeg_exe()
+    return ffbin.encoder_names(exe)
 
 
 def _test_encoder(codec_name: str) -> bool:
     """对指定 ffmpeg 编码器做一次极短样片实测编码，验证驱动/设备可用。"""
-    exe = imageio_ffmpeg.get_ffmpeg_exe()
+    exe = ffbin.get_ffmpeg_exe()
     try:
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "t.mp4")
@@ -118,12 +110,12 @@ def detect_encoders() -> dict[str, tuple[str, ...]]:
     每台机器只需完整探测一次；驱动或 ffmpeg 升级后
     自动失效重测。内存中再叠加 lru_cache，一次会话内多次调用零成本。
     """
-    exe = imageio_ffmpeg.get_ffmpeg_exe()
+    exe = ffbin.get_ffmpeg_exe()
     try:
         st = os.stat(exe)
         key = (os.path.abspath(exe), st.st_size, int(st.st_mtime))
     except OSError:
-        key = (imageio_ffmpeg.get_ffmpeg_exe(), 0, 0)
+        key = (ffbin.get_ffmpeg_exe(), 0, 0)
 
     cached = _load_cache(key)
     if cached is not None:
