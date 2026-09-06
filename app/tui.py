@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time as _time
 from pathlib import Path
 
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, ScreenStackError
 from textual.screen import ModalScreen
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Checkbox, Footer, Header, Input, Select, Static, TextArea
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Button, Checkbox, Footer, Header, Input, ProgressBar, Select, Static, TextArea
 
+from .core.encoder import ProcessCancelled, process
 from .models import (
     KIND_IMAGE, KIND_TEXT, MODE_MOTION, MODE_TILED,
     TRAJECTORIES, TRAJECTORY_LABELS,
@@ -72,6 +75,49 @@ class PreviewScreen(ModalScreen):
             self.query_one("#preview_sketch", Static).update(sketch_text)
 
 
+class ExportScreen(ModalScreen):
+    """导出进度屏：帧进度 + 平滑速率 + ETA + 取消。"""
+
+    BINDINGS = [("escape", "cancel_or_close", "取消/关闭")]
+
+    def __init__(self, total: int) -> None:
+        super().__init__()
+        self._total = max(1, total)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="export_body"):
+            yield Static("准备中…", id="export_status")
+            yield ProgressBar(total=100.0, show_eta=False, id="export_bar")
+            with Horizontal():
+                yield Button("取消导出", id="export_cancel", variant="error")
+                yield Button("关闭", id="export_close", disabled=True)
+        yield Footer()
+
+    def update_progress(self, done: int, total: int, status: str) -> None:
+        self.query_one("#export_bar", ProgressBar).update(
+            progress=done / self._total * 100)
+        if status:
+            self.query_one("#export_status", Static).update(status)
+
+    def mark_finished(self, msg: str) -> None:
+        self.query_one("#export_status", Static).update(msg)
+        self.query_one("#export_bar", ProgressBar).update(progress=100.0)
+        self.query_one("#export_cancel", Button).disabled = True
+        self.query_one("#export_close", Button).disabled = False
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "export_cancel":
+            self.app._cancel_export()
+        elif event.button.id == "export_close":
+            self.app.pop_screen()
+
+    def action_cancel_or_close(self) -> None:
+        if self.query_one("#export_close", Button).disabled:
+            self.app._cancel_export()
+        else:
+            self.app.pop_screen()
+
+
 class WatermarkTuiApp(App[None]):
     """视频水印 TUI 主应用。"""
 
@@ -92,16 +138,22 @@ class WatermarkTuiApp(App[None]):
     }
     PreviewScreen #preview_body { height: 1fr; }
     PreviewScreen Static { margin-bottom: 0; }
+    ExportScreen #export_body { height: auto; padding: 1 2; }
+    ExportScreen ProgressBar { margin-bottom: 1; }
     """
 
     BINDINGS = [("ctrl+q", "quit", "退出"), ("ctrl+s", "save_config", "保存配置"),
                 ("f5", "preview_frame", "预览帧"),
-                ("f6", "preview_sketch", "轨迹示意")]
+                ("f6", "preview_sketch", "轨迹示意"),
+                ("f7", "export_run", "开始导出")]
 
     def __init__(self, config_path: str | None = None) -> None:
         super().__init__()
         self.config_path_arg = config_path  # 启动时 --config 预载
         self.last_json: str = ""  # 最近一次「预览 JSON」的结果（测试断言用）
+        self._cancel_event: threading.Event | None = None
+        self._export_t0: float = 0.0
+        self._last_ui_update: float = 0.0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -174,6 +226,7 @@ class WatermarkTuiApp(App[None]):
 
         with Horizontal(id="actions"):
             yield Button("预览 JSON", id="preview_json")
+            yield Button("开始导出 (F7)", id="export_run", variant="success")
         yield Static("（尚未生成）", id="json_out")
         yield Footer()
 
@@ -363,6 +416,97 @@ class WatermarkTuiApp(App[None]):
             self._open_preview()
         elif event.button.id == "preview_sketch":
             self._open_preview(with_sketch=False)
+        elif event.button.id == "export_run":
+            self._start_export()
+
+    # ------------------------------------------------------------------
+    # 导出（M4：后台线程 + 进度/速率/ETA + 取消）
+    # ------------------------------------------------------------------
+    def _start_export(self) -> None:
+        video = self.query_one("#input_path", Input).value.strip()
+        if not video or not Path(video).is_file():
+            self.notify("请先填写正确的输入视频路径", severity="error")
+            return
+        try:
+            cfg = self.collect_config()
+            params = self.collect_export_params()
+        except ConfigError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        output = self.query_one("#output_path", Input).value.strip()
+        if not output:
+            p = Path(video)
+            output = str(p.with_name(p.stem + "_watermarked.mp4"))
+        if Path(output).resolve() == Path(video).resolve():
+            self.notify("输出路径不能与输入相同", severity="error")
+            return
+        from .core.encoder import probe
+        try:
+            total = probe(video)["frames"] or 0
+        except Exception as exc:  # noqa: BLE001
+            self.notify(f"无法读取视频信息：{exc}", severity="error")
+            return
+        self._cancel_event = threading.Event()
+        self.push_screen(ExportScreen(total))
+        self._export_worker(video, output, cfg, params, self._cancel_event)
+
+    @work(thread=True, exclusive=True, group="export")
+    def _export_worker(self, video: str, output: str, cfg: WatermarkConfig,
+                       params: dict, cancel_event: threading.Event) -> None:
+        t0 = _time.monotonic()
+        self._export_t0 = t0
+        self._last_ui_update = 0.0
+
+        def cb(done: int, tot: int) -> None:
+            now = _time.monotonic()
+            if now - self._last_ui_update < 0.1:  # 节流：每 0.1s 最多刷一次 UI
+                return
+            self._last_ui_update = now
+            elapsed = now - t0
+            rate = done / elapsed if elapsed > 0 else 0.0
+            eta = (tot - done) / rate if rate > 0 and tot else 0.0
+            self.call_from_thread(self._export_screen_update,
+                                  done, tot, rate, eta)
+
+        try:
+            stats = process(video, output, cfg, progress_cb=cb,
+                            cancel_event=cancel_event, **params)
+        except ProcessCancelled:
+            self.call_from_thread(self._export_finished,
+                                  "已取消（输出未生成）", None)
+            return
+        except Exception as exc:  # noqa: BLE001
+            self.call_from_thread(self._export_finished, f"失败：{exc}", None)
+            return
+        self.call_from_thread(
+            self._export_finished,
+            f"完成 ✓ {stats['frames']} 帧 · {stats['width']}x{stats['height']}"
+            f" · 编码器 {stats['codec']}\n输出：{output}", stats)
+
+    def _export_screen_update(self, done: int, total: int,
+                              rate: float, eta: float) -> None:
+        try:
+            if not isinstance(self.screen, ExportScreen):
+                return
+            status = (f"第 {done}/{total} 帧 · {rate:.1f} 帧/秒"
+                      + (f" · 剩余 ~{eta:.0f} 秒" if eta > 0 else ""))
+            self.screen.update_progress(done, total, status)
+        except ScreenStackError:
+            pass  # app 关闭竞态：栈已空，无需更新
+
+    def _export_finished(self, msg: str, stats) -> None:
+        try:
+            if isinstance(self.screen, ExportScreen):
+                self.screen.mark_finished(msg)
+            else:
+                self.notify(msg, severity="information")
+        except ScreenStackError:
+            pass
+
+    def _cancel_export(self) -> None:
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+            self.notify("正在取消…", severity="warning")
 
     # ------------------------------------------------------------------
     # 预览（M3：半块像素渲染，后台线程抽帧避免卡 UI）
@@ -411,6 +555,9 @@ class WatermarkTuiApp(App[None]):
 
     def action_preview_sketch(self) -> None:
         self._open_preview(with_sketch=False)
+
+    def action_export_run(self) -> None:
+        self._start_export()
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -191,6 +191,62 @@ async def run_tests() -> None:
                 check("帧+轨迹预览屏打开", False, "15s 内未打开")
 
 
+    # ---------- 8. 导出（engine 取消 + TUI 端到端） ----------
+    import threading as _th
+    from app.core.encoder import (  # noqa: E402
+        ProcessCancelled as _PC, generate_sample_video, process as _process,
+    )
+    from app.tui import ExportScreen  # noqa: E402
+
+    print("== 8. 导出（取消 + 端到端） ==")
+    tmp2 = Path(tempfile.mkdtemp())
+    src8 = tmp2 / "src8.mp4"
+    generate_sample_video(str(src8), size=(320, 180), duration=2.0, fps=30)
+
+    # 8a. engine 级确定性取消（预置位 event → 第 0 帧即中断）
+    ev = _th.Event()
+    ev.set()
+    try:
+        _process(str(src8), str(tmp2 / "x.mp4"), WatermarkConfig(text="T"),
+                 hw_encoder="none", hw_decode=False, cancel_event=ev)
+        check("engine 预置位取消", False, "未抛 ProcessCancelled")
+    except _PC:
+        check("engine 预置位取消（无 tmp 残留）",
+              not list(tmp2.glob(".vw_tmp_*")))
+
+    # 8b. TUI 端到端导出（F7 → ExportScreen → 完成回调）
+    app5 = WatermarkTuiApp()
+    out8 = tmp2 / "out8.mp4"
+    async with app5.run_test(size=(110, 48)) as pilot:
+        app5.query_one("#input_path", Input).value = str(src8)
+        app5.query_one("#output_path", Input).value = str(out8)
+        app5.query_one("#hw_encoder", Select).value = "none"
+        await pilot.pause()
+        await pilot.press("f7")
+        if not await wait_screen_type(app5, ExportScreen, 10.0):
+            check("导出屏打开", False, "10s 内未打开")
+        else:
+            check("导出屏打开", True)
+            ok = False
+            for _ in range(1200):  # 最多 120s
+                st_text = str(app5.screen.query_one(
+                    "#export_status", Static).render())
+                if "完成" in st_text or "失败" in st_text:
+                    ok = "完成" in st_text
+                    break
+                await pilot.pause(0.1)
+            check("端到端导出完成", ok)
+            check("输出文件有效", out8.is_file() and out8.stat().st_size > 1000)
+
+
+async def wait_screen_type(app, screen_cls, timeout_s: float) -> bool:
+    for _ in range(int(timeout_s / 0.1)):
+        if isinstance(app.screen, screen_cls):
+            return True
+        await asyncio.sleep(0.1)
+    return False
+
+
 def main() -> int:
     asyncio.run(run_tests())
     print()

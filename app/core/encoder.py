@@ -26,6 +26,10 @@ from .subproc import run as run_hidden  # 隐藏窗口启动 ffmpeg（避免 GUI
 ProgressCB = Optional[Callable[[int, int], None]]  # (done, total)
 
 
+class ProcessCancelled(RuntimeError):
+    """导出被取消（cancel_event 触发；临时文件已清理，无输出产生）。"""
+
+
 def get_ffmpeg_exe() -> str:
     """返回实际使用的 ffmpeg 可执行文件路径（经 ffbin 解析层，见 ffbin.py）。
 
@@ -84,12 +88,16 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
             pix_fmt_out: str = "yuv420p",
             hw_encoder: str = "auto", hw_codec: str = "h264",
             hw_decode: bool = True,
-            parallel: int = 0) -> dict:
+            parallel: int = 0,
+            cancel_event=None) -> dict:
     """读输入视频 -> 逐帧叠加水印 -> 编码输出，并保留原音频。
 
     视频帧通过 imageio-ffmpeg 逐帧处理；音频流用内置 ffmpeg 从原视频
     无损复制（copy）合并回输出，保证转换后不丢音轨。
     返回处理统计 {frames, width, height, fps, codec}。
+
+    取消：cancel_event 传入 threading.Event，置位后尽快中断处理并抛出
+    ProcessCancelled（临时文件清理，无输出产生）；默认 None 不启用。
 
     GPU 加速参数：
     - hw_encoder: auto / none / nvenc / qsv / amf / d3d12va / mf。
@@ -149,16 +157,25 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
         output_params=out_params,
     )
     writer.send(None)  # 启动写入生成器（imageio-ffmpeg 约定）
+    cancelled = False
     try:
         gen = _open_frames_reader(input_path, hw_decode)
         if workers > 1:
             done = _run_pipelined(gen, comp, writer, W, H, out_w, out_h, fps,
-                                  total, progress_cb, workers)
+                                  total, progress_cb, workers,
+                                  cancel_event=cancel_event)
         else:
             done = _run_serial(gen, comp, writer, W, H, out_w, out_h, fps,
-                               total, progress_cb)
+                               total, progress_cb, cancel_event=cancel_event)
+    except ProcessCancelled:
+        cancelled = True
+        raise
     finally:
+        # writer.close() 让 ffmpeg 收尾（0 帧时会重写出空文件），因此
+        # 取消路径的临时文件必须在 close 之后删除才能真正清理干净
         writer.close()
+        if cancelled and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
     try:
         _merge_audio(input_path, tmp_path, output_path, fps_out=out_fps or fps)
@@ -171,10 +188,12 @@ def process(input_path: str, output_path: str, cfg: WatermarkConfig,
 
 
 def _run_serial(gen, comp, writer, W, H, out_w, out_h, fps, total,
-                progress_cb) -> int:
+                progress_cb, cancel_event=None) -> int:
     """串行读帧->合成->写入（保留旧行为）。"""
     done = 0
     for frame_bytes in gen:
+        if cancel_event is not None and cancel_event.is_set():
+            raise ProcessCancelled(f"已取消（完成 {done}/{total} 帧）")
         img = Image.frombytes("RGB", (W, H), frame_bytes)
         if (out_w, out_h) != (W, H):
             img = img.resize((out_w, out_h), Image.LANCZOS)
@@ -187,7 +206,7 @@ def _run_serial(gen, comp, writer, W, H, out_w, out_h, fps, total,
 
 
 def _run_pipelined(gen, comp, writer, W, H, out_w, out_h, fps, total,
-                   progress_cb, workers) -> int:
+                   progress_cb, workers, cancel_event=None) -> int:
     """多线程流水线：主线程读帧 -> N 个 worker 并行合成 -> 写线程按序编码。
 
     - 有界队列做背压（内存占用封顶，ffmpeg 慢时自动限速）；
@@ -250,7 +269,11 @@ def _run_pipelined(gen, comp, writer, W, H, out_w, out_h, fps, total,
     wt.start()
 
     try:
+        cancelled = False
         for seq, frame_bytes in enumerate(gen):
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break  # 跳出后仍收尾队列（排空在途帧），避免 worker 卡死
             raw_q.put((seq, frame_bytes))
         for _ in workers_threads:
             raw_q.put(sentinel)
@@ -265,6 +288,8 @@ def _run_pipelined(gen, comp, writer, W, H, out_w, out_h, fps, total,
         except Exception:  # noqa: BLE001
             pass
 
+    if cancelled:
+        raise ProcessCancelled(f"已取消（完成 {state['done']}/{total} 帧）")
     if state["error"] is not None:
         raise state["error"]
     return state["done"]
@@ -393,5 +418,5 @@ def generate_sample_logo(path: str, text: str = "LOGO", size: int = 220) -> None
     img.save(path)
 
 
-__all__ = ["get_ffmpeg_exe", "probe", "process",
+__all__ = ["get_ffmpeg_exe", "probe", "process", "ProcessCancelled",
            "generate_sample_video", "generate_sample_logo"]
