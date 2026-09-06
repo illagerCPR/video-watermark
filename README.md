@@ -47,7 +47,20 @@
 - **ffmpeg 二进制解析层（v0.3.2 起）**：优先用内置二进制（零依赖）；Linux 上内置版无硬件编码器时自动探测并切换到带硬件编码器的系统 ffmpeg；支持 `--ffmpeg` 显式指定与环境变量 `VIDEO_WATERMARK_FFMPEG` 覆盖
 - **GUI 二进制来源设置（v0.4.0 起）**：输出设置区可选 ffmpeg 二进制来源（自动（推荐）/ 内置二进制 / 自定义路径），QSettings 持久化，切换后下次生成/检测生效；「检测」结果同时显示当前实际使用的二进制与来源
 
+### 7. ⌨️ TUI 交互模式（v0.5.0 起）
+- **终端全屏界面**：像 GUI 一样交互式配置全部水印参数（22 个字段 + 编码参数），无需记忆命令行
+- **半块像素预览**：任意时间点的水印合成帧 + 移动轨迹示意，直接渲染在终端内（F5/F6）
+- **交互式导出**：帧进度 + 平滑速率 + ETA + 一键取消（F7），后台线程渲染不卡界面
+- **配置文件**：`--config` 预载 / 界面内加载保存（与 GUI/CLI 完全互通的 JSON）
+- **单 exe 双模式**：Windows exe 支持 `--tui` 参数（自动附加控制台）；双击启动仍为 GUI
+- **入口**：`python -m app.tui`、`python -m app.cli --tui`、Linux `./启动.sh --tui`、Windows `启动-tui.bat`
+- **按键**：`F5` 预览帧+轨迹 · `F6` 轨迹示意 · `F7` 开始导出 · `Ctrl+S` 保存配置 · `Esc` 返回/取消 · `Ctrl+Q` 退出
+
 ## 🚀 快速开始
+
+> 要求：本机已安装 **Python 3.10 或更高版本**。
+> Linux GUI 需要系统图形库（多数桌面发行版自带）；若报 "could not load the Qt platform plugin xcb"，按启动脚本的提示安装 `libxcb-cursor0` 等库即可。
+> Windows 若启动失败，查看项目根目录 `gui_error.log` 定位原因。
 
 ### 方式一：双击启动（推荐）
 
@@ -59,6 +72,12 @@
 > 要求：本机已安装 **Python 3.10 或更高版本**。
 > Linux GUI 需要系统图形库（多数桌面发行版自带）；若报 "could not load the Qt platform plugin xcb"，按启动脚本的提示安装 `libxcb-cursor0` 等库即可。
 > Windows 若启动失败，查看项目根目录 `gui_error.log` 定位原因。
+
+### 方式一 · B：TUI 终端模式（v0.5.0 起）
+
+- **Windows**：双击 **`启动-tui.bat`**（或在终端运行 `.venv\Scripts\python.exe -m app.tui`；打包版 `VideoWatermark.exe --tui`）
+- **Linux / macOS**：`./启动.sh --tui`
+- 按键：`F5` 预览帧+轨迹 · `F6` 轨迹示意 · `F7` 开始导出 · `Ctrl+S` 保存配置 · `Esc` 返回/取消 · `Ctrl+Q` 退出
 
 ### 方式二：命令行
 ```bat
@@ -166,12 +185,13 @@ rem Windows
 - **处理过程不再闪命令窗（v0.2.1）**：所有 ffmpeg / explorer 子进程统一走隐藏窗口封装（`CREATE_NO_WINDOW`）
 - **CI 自动构建（v0.3.0 起）**：推送 `v*` 标签或手动触发后，GitHub Actions 自动构建 Windows 与 Linux 双平台产物并发布 Release（见 `.github/workflows/build.yml`）
 
-## 🧪 测试与验证（10 套）
+## 🧪 测试与验证（11 套）
 
 ```bat
 rem Windows（PowerShell）
 .venv\Scripts\python.exe scripts\smoke_test.py          rem 轨迹/渲染逻辑
 .venv\Scripts\python.exe scripts\verify_ffbin.py        rem ffmpeg 二进制解析层专项
+.venv\Scripts\python.exe scripts\tui_test.py            rem TUI 全流程（Pilot 无终端自动化）
 .venv\Scripts\python.exe scripts\verify_step1.py        rem 像素级成品验证
 .venv\Scripts\python.exe scripts\verify_hw.py           rem GPU 硬件加速专项
 .venv\Scripts\python.exe scripts\verify_pipeline.py     rem 并行流水线专项
@@ -187,6 +207,7 @@ rem Windows（PowerShell）
 # Linux / macOS
 .venv/bin/python scripts/smoke_test.py
 .venv/bin/python scripts/verify_ffbin.py
+.venv/bin/python scripts/tui_test.py
 .venv/bin/python scripts/verify_step1.py
 .venv/bin/python scripts/verify_hw.py
 .venv/bin/python scripts/verify_pipeline.py

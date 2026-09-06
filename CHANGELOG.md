@@ -2,6 +2,20 @@
 
 本项目所有显著变更记录于此。格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本（`vX.Y.Z`，发版即打 tag，不覆盖旧标签）。
 
+## [v0.5.0] - 2026-09-06
+
+### 新增
+- **TUI 交互模式**：Textual 全屏终端界面（`app/tui.py`），像 GUI 一样交互式配置全部 22 个水印字段 + 编码参数，无需记忆命令行
+- **半块像素预览**（`app/tui_preview.py`）：任意时间点的水印合成帧 + 6 种轨迹示意图，直接渲染在终端内（`▀` 字符 + 24bit 颜色，宽度自适应）
+- **交互式导出**：帧进度 + 平滑速率 + ETA + 一键取消；引擎 `process()` 新增 `cancel_event` 取消支持（`ProcessCancelled`，临时文件彻底清理）
+- **配置文件**：`--config` 预载 / 界面内加载保存（`Ctrl+S`），与 GUI/CLI 的 JSON 完全互通
+- **双入口**：`python -m app.tui`、`python -m app.cli --tui`、Linux `./启动.sh --tui`、Windows `启动-tui.bat`
+- **Windows exe 双模式**（实验性）：`VideoWatermark.exe --tui` 自动附加父控制台进入 TUI；双击启动（无控制台）弹提示后转 GUI
+- **测试**：新增 `tui_test.py`（Textual Pilot 无终端自动化，8 段断言），测试体系增至 **11 套**
+
+### 变更
+- 导出按键/表单校验：非法值提示带字段名与允许范围
+
 ## [v0.4.0] - 2026-09-06
 
 ### 新增
@@ -81,7 +95,8 @@
 ### 新增
 - 首个可用版本（Windows 64 位单文件版）：全屏平铺文字/图片水印（角度/多行）、移动水印（6 种轨迹）、实时预览、批量处理、命令行入口、独立 exe 打包
 
-[Unreleased]: https://github.com/illagerCPR/video-watermark/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/illagerCPR/video-watermark/compare/v0.5.0...HEAD
+[v0.5.0]: https://github.com/illagerCPR/video-watermark/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/illagerCPR/video-watermark/compare/v0.3.2...v0.4.0
 [v0.3.2]: https://github.com/illagerCPR/video-watermark/compare/v0.3.0...v0.3.2
 [v0.3.0]: https://github.com/illagerCPR/video-watermark/compare/v0.2.2...v0.3.0
