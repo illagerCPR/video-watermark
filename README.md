@@ -214,6 +214,13 @@ rem Windows（PowerShell）
 - **Linux 下没有系统 ffmpeg 会怎样**：继续使用内置静态二进制，全部功能正常（零依赖），仅无 GPU 硬件编码（回退 libx264）。
 - **Linux 字体下拉为空 / 中文变方框**：确保安装了中文字体（如 `fonts-noto-cjk`、`fonts-wqy-microhei`），软件会自动递归枚举并默认选用可用的中文字体。
 
+## ⚠️ 已知限制
+
+- **VAAPI 硬件编码暂不支持（AMD Linux）**：AMD 显卡在 Linux 上的硬件编码（`h264_vaapi`/`hevc_vaapi`）需要 `-init_hw_device` 设备初始化与 `hwupload` 滤镜链，尚未实现；AMD Linux 用户当前自动回退 CPU 编码（libx264），后续计划以实验性参数（`--hw-encoder vaapi`）提供
+- **Linux 硬件解码收益有限**：`-hwaccel auto` 在"解码后读回软件帧"的管线中，vaapi/cuda 路径多数情况会失败并自动回退软件解码（功能正常，仅解码加速收益有限）；硬件解码加速主要在 Windows 生效
+- **Linux 暂无 AppImage**：当前以 tar.gz 分发，运行 GUI 仍需系统图形库（xcb 等，多数桌面发行版自带）
+- **QSV/核显场景**：Intel QSV 硬件编码在 Windows 与 Linux（系统 ffmpeg + 驱动就绪）均可自动使用；无驱动环境自动回退 CPU，不影响功能
+
 ## 📄 许可
 
 本项目基于 [Unlicense](LICENSE) 发布，可自由使用与分发。
