@@ -1,6 +1,38 @@
 # 视频水印工具
 
-一款桌面图形界面的视频水印软件：支持**全屏平铺水印**（文字/图片，可旋转角度）与**移动水印**（6 种预设轨迹），并提供预览、批量处理与输出编码控制。
+一款桌面图形界面的视频水印软件：支持**全屏平铺水印**（文字/图片，可旋转角度）与**移动水印**（7 种预设轨迹），并提供预览、批量处理与输出编码控制。
+
+## 🖥 启动方式
+
+> 前置：本机已安装 **Python ≥ 3.10**。首次运行会自动创建虚拟环境并安装依赖（官方源失败自动换国内镜像）；打包版（Release 下载的 exe/AppImage）无需 Python，直接运行即可。
+
+**Windows**（PowerShell 或 cmd）：
+
+```bat
+rem 图形界面
+启动.bat
+
+rem TUI 终端界面
+启动-tui.bat
+
+rem 命令行（脚本化 / 批量）
+.venv\Scripts\python.exe -m app.cli --input in.mp4 --output out.mp4 --text "水印文字"
+```
+
+**Linux / macOS**：
+
+```bash
+# 图形界面
+./启动.sh
+
+# TUI 终端界面
+./启动.sh --tui
+
+# 命令行（脚本化 / 批量）
+.venv/bin/python -m app.cli --input in.mp4 --output out.mp4 --text "水印文字"
+```
+
+> 打包版（Release 产物）：Windows 双击 `VideoWatermark.exe`（GUI）/ `VideoWatermarkTUI.exe`（TUI）；Linux 运行 `./VideoWatermark-linux-x86_64.AppImage`（加 `--tui` 进 TUI）。更多入口与参数见下方「快速开始」。
 
 ## ✨ 功能总览
 
