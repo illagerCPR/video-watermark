@@ -19,12 +19,13 @@ KIND_TEXT = "text"
 KIND_IMAGE = "image"
 KINDS = (KIND_TEXT, KIND_IMAGE)
 
-# 预设移动轨迹（6 种，>= 需求要求的 5 种）
+# 预设移动轨迹（7 种，>= 需求要求的 5 种）
 TRAJECTORY_HORIZONTAL = "horizontal"  # 水平往返
 TRAJECTORY_VERTICAL = "vertical"      # 垂直往返
 TRAJECTORY_DIAGONAL = "diagonal"      # 对角线往返
 TRAJECTORY_CIRCLE = "circle"          # 圆周运动
-TRAJECTORY_FIGURE8 = "figure8"        # 8 字形（李萨如曲线）
+TRAJECTORY_FIGURE8 = "figure8"        # 8 字形（竖向 8，李萨如曲线）
+TRAJECTORY_INFINITY = "infinity"      # ∞ 形（横向双环，李萨如曲线）
 TRAJECTORY_SINE = "sine"              # 正弦波漂移
 TRAJECTORIES = (
     TRAJECTORY_HORIZONTAL,
@@ -32,6 +33,7 @@ TRAJECTORIES = (
     TRAJECTORY_DIAGONAL,
     TRAJECTORY_CIRCLE,
     TRAJECTORY_FIGURE8,
+    TRAJECTORY_INFINITY,
     TRAJECTORY_SINE,
 )
 
@@ -41,7 +43,8 @@ TRAJECTORY_LABELS = {
     TRAJECTORY_VERTICAL: "垂直往返",
     TRAJECTORY_DIAGONAL: "对角线往返",
     TRAJECTORY_CIRCLE: "圆周运动",
-    TRAJECTORY_FIGURE8: "8 字形",
+    TRAJECTORY_FIGURE8: "8 字形（竖向）",
+    TRAJECTORY_INFINITY: "∞ 形（横向双环）",
     TRAJECTORY_SINE: "正弦波漂移",
 }
 

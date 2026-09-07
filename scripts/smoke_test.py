@@ -10,7 +10,7 @@ from PIL import Image
 from app.core import motion, watermark
 from app.models import (
     KIND_IMAGE, KIND_TEXT, MODE_MOTION, MODE_TILED,
-    TRAJECTORIES, WatermarkConfig,
+    TRAJECTORIES, TRAJECTORY_INFINITY, WatermarkConfig,
 )
 
 failures = []
@@ -23,7 +23,7 @@ def check(name, cond, detail=""):
         failures.append(name)
 
 
-print("== 1. 轨迹计算（6 种，坐标必须在帧内且移动） ==")
+print("== 1. 轨迹计算（7 种，坐标必须在帧内且移动） ==")
 for tr in TRAJECTORIES:
     cfg = WatermarkConfig(mode=MODE_MOTION, trajectory=tr)
     bad = []
@@ -35,6 +35,19 @@ for tr in TRAJECTORIES:
             bad.append((t, round(x, 1), round(y, 1)))
     check(f"轨迹 {tr} 坐标在帧内", not bad, str(bad) if bad else "")
     check(f"轨迹 {tr} 确实在移动", len(positions) >= 5, f"{len(positions)} 个不同位置")
+
+# ∞ 形专检：横向取向（x 跨度必须大于 y 跨度，与竖向 8 字形区分）
+cfg_inf = WatermarkConfig(mode=MODE_MOTION, trajectory=TRAJECTORY_INFINITY)
+xs, ys = [], []
+for t in [x * 0.02 for x in range(201)]:
+    x, y = motion.position_at(cfg_inf, t, 640, 360, 100, 50)
+    xs.append(x)
+    ys.append(y)
+check("轨迹 infinity 为横向 ∞（x 跨度 > y 跨度）",
+      (max(xs) - min(xs)) > (max(ys) - min(ys)),
+      f"x={max(xs) - min(xs):.0f} y={max(ys) - min(ys):.0f}")
+check("轨迹 infinity 中心自交（经过中心附近）",
+      any(abs(x - 320) < 40 and abs(y - 180) < 40 for x, y in zip(xs, ys)))
 
 print("== 2. 文字水印渲染（多行 + 旋转 + 平铺） ==")
 cfg = WatermarkConfig(kind=KIND_TEXT, mode=MODE_TILED,

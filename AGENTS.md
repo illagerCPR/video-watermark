@@ -27,7 +27,7 @@
 
 - `app/models.py` — `WatermarkConfig` 单一配置 dataclass，所有参数在此定义；`config_to_json`/`json_to_config` 序列化。
 - `app/core/watermark.py` — 渲染文字/图片单元格、旋转、平铺瓦片、字体枚举。
-- `app/core/motion.py` — 6 种轨迹（horizontal/vertical/diagonal/circle/figure8/sine），`position_at()` 返回帧时刻水印左上角坐标。
+- `app/core/motion.py` — 7 种轨迹（horizontal/vertical/diagonal/circle/figure8/infinity/sine），`position_at()` 返回帧时刻水印左上角坐标。
 - `app/core/compositor.py` — `WatermarkCompositor` 逐帧 `apply(frame_rgb, t)`，含时间范围门控、自转。
 - `app/core/encoder.py` — `probe()` 解析分辨率/帧率/时长/是否有音频；`process()` 读帧→合成→编码输出→**合并音频**。`process()` 支持**并行帧流水线**（`parallel` 参数：0=自动按 CPU 核数 2~4、1=串行、N=指定）：`_run_serial` 串行、`_run_pipelined` 多线程（主线程读帧 → N 个 worker 线程并行合成 → 独立写线程按帧序号保序喂给 ffmpeg，有界队列背压）。串行与并行输出**字节级一致**（合成逻辑相同、仅交付方式不同）。
 - `app/core/preview.py` — 单帧预览渲染、轨迹示意图。

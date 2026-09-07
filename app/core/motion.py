@@ -1,12 +1,13 @@
 """移动水印轨迹计算。
 
-6 种预设轨迹（满足需求 >=5）：
+7 种预设轨迹（满足需求 >=5）：
 1. horizontal  水平往返
 2. vertical    垂直往返
 3. diagonal    对角线往返
 4. circle      圆周运动
-5. figure8     8 字形（李萨如曲线 x=sin(2a), y=sin(a)）
-6. sine        正弦波漂移（水平往返 + 纵向正弦起伏）
+5. figure8     8 字形（竖向 8，李萨如曲线 x=sin(2a), y=sin(a)）
+6. infinity    ∞ 形（横向双环，李萨如曲线 x=sin(a), y=sin(2a)，v0.5.5 起）
+7. sine        正弦波漂移（水平往返 + 纵向正弦起伏）
 
 所有轨迹输出水印左上角坐标（含边界留白），保证水印完整出现在画面内。
 """
@@ -19,6 +20,7 @@ from ..models import (
     TRAJECTORY_DIAGONAL,
     TRAJECTORY_FIGURE8,
     TRAJECTORY_HORIZONTAL,
+    TRAJECTORY_INFINITY,
     TRAJECTORY_SINE,
     TRAJECTORY_VERTICAL,
     WatermarkConfig,
@@ -75,6 +77,10 @@ def position_at(cfg: WatermarkConfig, t: float,
         r = min(rx, ry * 1.4)
         x = cx + r * math.sin(2.0 * a)
         y = cy + r * 0.6 * math.sin(a)
+    elif tr == TRAJECTORY_INFINITY:
+        # 李萨如：x 一圈、y 两圈 -> 横向 ∞（左右双环，中心自交）
+        x = cx + rx * math.sin(a)
+        y = cy + ry * 0.5 * math.sin(2.0 * a)
     elif tr == TRAJECTORY_SINE:
         x = x_lo + (x_hi - x_lo) * _tri(phase)
         y = cy + ry * 0.9 * math.sin(2.0 * math.pi * 2.0 * phase)

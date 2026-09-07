@@ -2,6 +2,15 @@
 
 本项目所有显著变更记录于此。格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本（`vX.Y.Z`，发版即打 tag，不覆盖旧标签）。
 
+## [v0.5.5] - 2026-09-06
+
+### 新增
+- **移动轨迹新预设 `infinity`（∞ 形，横向双环）**：李萨如曲线 x=sin(a)、y=sin(2a)，与既有竖向 8 字形（`figure8`）取向互补；GUI/TUI 下拉与 CLI `--trajectory infinity` 同步可用。`TRAJECTORY_LABELS` 为 8 字形补充"（竖向）"标注以区分
+- 新增 `PROJ_INFO.md`：项目结构/依赖/功能/测试/发布信息快照（随版本维护）
+
+### 变更
+- `smoke_test` 轨迹覆盖 7 种，并为 ∞ 形增加横向取向与中心自交专检
+
 ## [v0.5.4] - 2026-09-06
 
 ### 修复
