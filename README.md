@@ -32,7 +32,34 @@ rem 命令行（脚本化 / 批量）
 .venv/bin/python -m app.cli --input in.mp4 --output out.mp4 --text "水印文字"
 ```
 
-> 打包版（Release 产物）：Windows 双击 `VideoWatermark.exe`（GUI）/ `VideoWatermarkTUI.exe`（TUI）；Linux 运行 `./VideoWatermark-linux-x86_64.AppImage`（加 `--tui` 进 TUI）。更多入口与参数见下方「快速开始」。
+**打包版**（Release 下载，无需 Python）：
+
+```bat
+rem Windows：GUI
+VideoWatermark.exe
+rem TUI 第一种启动方式
+VideoWatermarkTUI.exe
+rem TUI 第二种启动方式
+start /wait VideoWatermark.exe --tui
+rem TUI 第二种启动方式 在Powershell
+cmd /c start /wait VideoWatermark.exe --tui
+rem 自检
+VideoWatermark.exe --selftest
+
+```
+
+```bash
+# Linux AppImage：GUI / TUI / 自检
+./VideoWatermark-linux-x86_64.AppImage
+./VideoWatermark-linux-x86_64.AppImage --tui
+./VideoWatermark-linux-x86_64.AppImage --selftest
+
+# Linux tar.gz：解压后运行
+tar -xzf VideoWatermark-linux-x86_64.tar.gz
+./VideoWatermark --selftest
+```
+
+> 更多入口与参数见下方「快速开始」。
 
 ## ✨ 功能总览
 
