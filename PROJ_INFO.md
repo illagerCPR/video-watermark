@@ -1,17 +1,17 @@
 # VideoWatermark 项目信息（PROJ_INFO）
 
 > 本文件为项目结构与能力快照，随版本维护；最新变更见 `CHANGELOG.md`。
-> 当前版本：**v0.5.5** · 仓库：<https://github.com/illagerCPR/video-watermark> · 许可：Unlicense
+> 当前版本：**v0.5.6**（代码；最新发布 v0.5.5）· 仓库：<https://github.com/illagerCPR/video-watermark> · 许可：Unlicense
 
 ## 一、项目定位
 
 跨平台（Windows + Linux）**桌面视频水印工具**，一个引擎三种入口：图形界面（PySide6）、命令行（argparse，可脚本化/批量）、终端交互界面（Textual TUI）。核心卖点是**零系统依赖**：内置静态 ffmpeg，开箱即用；在有 GPU/系统 ffmpeg 的环境下又能自动升级为硬件编解码。
 
-主语言 Python：应用层 `app/` 约 4500 行 + 测试脚本 `scripts/` 约 1700 行（合计约 6200 行）。
+主语言 Python：应用层 `app/` 约 4900 行 + 测试脚本 `scripts/` 约 2000 行（合计约 6900 行）。
 
 ## 二、功能全景
 
-### 1. 水印能力（单配置模型 `WatermarkConfig`，22 字段）
+### 1. 水印能力（单配置模型 `WatermarkConfig`，25 字段）
 
 | 类别 | 内容 |
 |---|---|
@@ -46,15 +46,16 @@
 |---|---|---|
 | GUI | `启动.bat` / `启动.sh` / `python -m app.main` | 全功能表单 + 实时预览（帧/轨迹示意）+ 批量处理 + ffmpeg 二进制来源设置（QSettings）+ 「检测」按钮（编码器实测 + 解码器报告 + 当前二进制） |
 | CLI | `python -m app.cli --input … --output … [--set k=v] [--print-config] …` | 全参数脚本化；`--set` 覆盖任意配置字段；启动时打印实际选用的 ffmpeg 及理由 |
-| TUI | `python -m app.tui` / `--tui` / `启动-tui.bat` / `VideoWatermarkTUI.exe`（Win）/ `./启动.sh --tui` | Textual 全屏：字段标签表单、配置 JSON 加载/保存（Ctrl+S）、终端内半块像素预览（F5/F6）、检测硬件按钮、导出进度/取消（F7）；Windows 打包版经控制台垫片独占键盘 |
+| TUI | `python -m app.tui` / `--tui` / `启动-tui.bat` / `VideoWatermarkTUI.exe`（Win）/ `./启动.sh --tui` | Textual 全屏：字段标签表单、配置 JSON 加载/保存（Ctrl+S）、终端内半块像素预览（F5/F6）、检测硬件按钮、导出进度/取消（F7）、批量处理（F8，v0.5.6 起：文件/目录入队+并行数+帧级进度+取消）；Windows 打包版经控制台垫片独占键盘 |
 
 ## 三、架构（`app/` 模块与职责）
 
 | 模块 | 行数 | 职责 |
 |---|---|---|
 | `ui/main_window.py` | ~950 | GUI 主窗口 + 后台导出线程（QThread）+ ffmpeg 来源设置 |
-| `tui.py` | ~700 | TUI 应用（带标签表单/校验/预览屏/导出屏/硬件检测） |
-| `ui/batch_dialog.py` | 432 | 批量处理（ProcessPoolExecutor 并行） |
+| `tui.py` | ~1010 | TUI 应用（带标签表单/校验/预览屏/导出屏/批量屏/硬件检测） |
+| `ui/batch_dialog.py` | 361 | 批量处理 UI + Qt 信号桥接（执行逻辑在 core/batch.py，v0.5.6 起） |
+| `core/batch.py` | 176 | **批量核心（GUI/TUI 共用，v0.5.6）**：scan_videos/plan_jobs/run_batch（串行+进程池有界并行+Manager 队列帧进度+取消） |
 | `core/encoder.py` | 422 | probe/process：读帧→合成→编码→合并音频；并行流水线；取消 |
 | `core/hwaccel.py` | ~450 | 编码器实测探测、编码参数映射、解码参数、解码器报告 |
 | `main.py` | ~400 | 入口分发（GUI/TUI/selftest）、Windows 控制台附加、冻结环境清理 |
@@ -81,7 +82,7 @@
 - **系统 ffmpeg（可选）**：不装也全功能可用（内置二进制）；装了且带硬件编码器则**自动切换**启用 GPU 编码
 - **GPU 驱动（可选）**：NVIDIA（WSL2 需驱动直通）、Intel QSV、AMD AMF(Windows)
 - **Linux GUI 系统库**：xcb 系（多数桌面自带）；**中文字体**（Noto CJK/文泉驿等，自动枚举）
-- 首次源码运行需联网一次（imageio-ffmpeg 下载其静态二进制；打包版已内置）
+- 首次安装依赖需联网（pip 拉取 Pillow/PySide6 等）；ffmpeg 静态二进制**随 imageio-ffmpeg 包自带**，运行阶段无需联网
 
 ### 构建 / 发布工具链
 
@@ -102,9 +103,9 @@
 | 启动错误日志 | 项目根 `gui_error.log` |
 | 调试开关 | `VIDEO_WATERMARK_TUI_DEBUG=1`（TUI 控制台附加判定）、`VIDEO_WATERMARK_FFBIN_DEBUG=1`（ffmpeg 决策过程 → `/tmp/video_watermark_ffbin_debug.log`） |
 
-## 六、质量保障（测试 11 套 + CI）
+## 六、质量保障（测试 12 套 + CI）
 
-- `smoke_test`（7 种轨迹含 ∞ 横向取向专检 / 渲染）、`verify_ffbin`（二进制解析层）、`tui_test`（Pilot 无终端自动化，11 节：表单往返/校验/配置/预览屏/导出取消/布局回归/检测按钮/导出编码器显示）、`verify_step1`（**像素级**成品验证：水印差异 + 轨迹质心对照）、`gui_smoke`（含检测布局回归）、`gui_export_test`/`step3_export_test`/`step4_batch_test`（端到端导出/编码参数/批量）、`verify_time_range`、`verify_audio`（音频保留）、`verify_hw`（GPU 专项，环境感知 SKIP）、`verify_pipeline`（串并字节级一致）
+- `smoke_test`（7 种轨迹含 ∞ 横向取向专检 / 渲染）、`verify_ffbin`（二进制解析层）、`tui_test`（Pilot 无终端自动化，11 节：表单往返/校验/配置/预览屏/导出取消/布局回归/检测按钮/导出编码器显示）、`tui_batch_test`（TUI 批量专项，v0.5.6：core 层 scan_videos/plan_jobs/run_batch 取消语义 + Pilot 端到端串行/并行/取消/布局回归）、`verify_step1`（**像素级**成品验证：水印差异 + 轨迹质心对照）、`gui_smoke`（含检测布局回归）、`gui_export_test`/`step3_export_test`/`step4_batch_test`（端到端导出/编码参数/批量）、`verify_time_range`、`verify_audio`（音频保留）、`verify_hw`（GPU 专项，环境感知 SKIP）、`verify_pipeline`（串并字节级一致）
 - CI：双平台构建后各跑 `--selftest`（离屏建窗 + 真实编码 + 进程池可用性），tag 触发自动发布
 
 ## 七、发布产物（v0.5.5）
@@ -116,7 +117,7 @@
 | `VideoWatermark-linux-x86_64.tar.gz` | ~122MB | ELF 单文件 |
 | `VideoWatermark-linux-x86_64.AppImage` | ~123MB | 免安装，无 FUSE 自动解包 |
 
-**版本历史**（16 个发布）：v0.1.0~0.1.2（核心引擎与像素验证）→ v0.2.x（GUI、批量、进程池修复）→ v0.3.0（Linux 跨平台 + CI 双平台）→ v0.3.2（ffbin 解析层，Linux GPU 编码）→ v0.4.0（ffmpeg 来源设置、AppImage）→ v0.5.0（TUI 模式）→ v0.5.1（GUI/TUI 布局修复、Windows Terminal 支持）→ v0.5.2（TUI 键盘独占垫片）→ v0.5.3（解码器检测）→ v0.5.4（AppImage 库污染修复、TUI 字段标签/检测按钮/编码器显示）→ v0.5.5（∞ 形轨迹预设）。
+**版本历史**（16 个发布）：v0.1.0~0.1.2（核心引擎与像素验证）→ v0.2.x（GUI、批量、进程池修复）→ v0.3.0（Linux 跨平台 + CI 双平台）→ v0.3.2（ffbin 解析层，Linux GPU 编码）→ v0.4.0（ffmpeg 来源设置、AppImage）→ v0.5.0（TUI 模式）→ v0.5.1（GUI/TUI 布局修复、Windows Terminal 支持）→ v0.5.2（TUI 键盘独占垫片）→ v0.5.3（解码器检测）→ v0.5.4（AppImage 库污染修复、TUI 字段标签/检测按钮/编码器显示）→ v0.5.5（∞ 形轨迹预设）→ v0.5.6（TUI 批量处理 F8、批量核心抽离 core/batch.py、README 全面核对，待发版）。
 
 ## 八、已知限制
 

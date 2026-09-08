@@ -2,6 +2,21 @@
 
 本项目所有显著变更记录于此。格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本（`vX.Y.Z`，发版即打 tag，不覆盖旧标签）。
 
+## [v0.5.6] - 2026-09-07
+
+### 新增（TUI）
+- **批量处理（F8）**：主表单新增「批量处理 (F8)」按钮/按键，打开 `BatchScreen`——多视频共用打开时的表单水印/编码参数快照：
+  - 文件来源支持**单文件或目录**（目录递归扫描视频扩展名，自动去重）；列表可选中移除/清空；输出目录留空默认首个文件旁的 `水印输出/`；输出格式 MP4/MOV/MKV/AVI；**批量并行数**（0=自动，多进程同时处理多个视频）
+  - 进度：文件级 + 当前文件帧级（滑动窗口速率 + ETA，与 GUI 批量同款平滑）；RichLog 逐文件结果日志
+  - 取消：运行中 Esc/「取消」→ 串行中断当前文件；并行停止提交后续任务（在途文件处理完，界面上已注明）；取消后可再次开始
+- **`app/core/batch.py`（GUI/TUI 共用批量后端）**：`scan_videos`（文件/目录递归展开）、`plan_jobs`（`原名_水印.扩展名` 命名）、`run_batch`（串行/进程池并行统一入口；并行帧进度经 `Manager().Queue` 回传转发线程；进程池**有界提交**，取消后不再提交后续）；GUI `BatchWorker` 迁移至同一实现（行为不变，`step4_batch_test` 回归通过）
+
+### 文档
+- README 全面核对修正：简介补 TUI/命令行入口；「一键检测」更正为 GUI/TUI；移除过时的 TUI 字段计数；轨迹数 6→7（界面说明表/项目结构）；项目结构补 `tui.py`/`tui_preview.py`/`tui_shim.py`/`core/subproc.py`/`启动-tui.bat`；FAQ「首次使用联网下载 ffmpeg」更正为**随 imageio-ffmpeg 自带、无需联网**；CLI 参数重复行/快速开始重复提示块清理；打包产物补 TUI 垫片（≈8MB）并更新体积
+
+### 测试
+- 新增 `scripts/tui_batch_test.py`（第 12 套）：core 层 `scan_videos`/`plan_jobs`/`run_batch` 取消语义 + Pilot 端到端（串行/并行/取消/布局回归），并行含 Manager 队列帧进度与关停断言
+
 ## [v0.5.5] - 2026-09-06
 
 ### 新增

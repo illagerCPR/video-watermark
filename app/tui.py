@@ -4,6 +4,7 @@
 - 表单字段 ↔ WatermarkConfig（app/models.py，含 JSON 序列化往返）
 - 预览/轨迹 → app/core/preview.py（M3）
 - 导出/进度/取消 → app/core/encoder.process()（M4）
+- 批量处理（F8）→ app/core/batch.run_batch()（v0.5.6，与 GUI 共用后端）
 - ffmpeg 来源 / 硬件探测 → ffbin / hwaccel（状态栏展示）
 
 入口：`python -m app.tui`；或 `python -m app.cli --tui`。
@@ -12,18 +13,25 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
 import sys
 import threading
 import time as _time
+from collections import deque
 from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.screen import ModalScreen
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Footer, Header, Input, ProgressBar, Select, Static, TextArea
+from textual.widgets import (
+    Button, Checkbox, Footer, Header, Input, Label, ListItem, ListView,
+    ProgressBar, RichLog, Select, Static, TextArea,
+)
 
 from . import __version__
+from .core.batch import VIDEO_EXTS, plan_jobs, run_batch, scan_videos
 from .core.encoder import ProcessCancelled, process
 from .models import (
     KIND_IMAGE, KIND_TEXT, MODE_MOTION, MODE_TILED,
@@ -45,6 +53,8 @@ PRESET_CHOICES = [(p, p) for p in (
     "ultrafast", "superfast", "veryfast", "faster", "fast",
     "medium", "slow", "slower", "veryslow",
 )]
+BATCH_FORMAT_CHOICES = [("MP4（推荐）", "mp4"), ("MOV", "mov"),
+                        ("MKV", "mkv"), ("AVI", "avi")]
 
 
 class ConfigError(ValueError):
@@ -125,6 +135,324 @@ class ExportScreen(ModalScreen):
             self.app.pop_screen()
 
 
+class BatchScreen(ModalScreen):
+    """批量处理屏（v0.5.6）：多视频共用打开时的表单参数，串行/并行（进程池）。
+
+    - 文件来源：路径 Input 支持**单个视频文件**或**目录**（递归扫描视频扩展名）
+    - 进度：文件级 + 当前文件帧级（速率/ETA），并行模式经 Manager 队列回传
+    - 取消：Esc / 取消按钮 → 串行中断当前文件；并行停止提交后续（在途跑完）
+    """
+
+    BINDINGS = [("escape", "cancel_or_close", "取消/返回"),
+                ("f8", "start_batch", "开始批量")]
+
+    def __init__(self, cfg: WatermarkConfig, params: dict) -> None:
+        super().__init__()
+        self._cfg = cfg
+        # 帧流水线 parallel 不透传（批量下保持 process() 默认 auto，与 GUI 批量一致）
+        self._params = {k: v for k, v in params.items() if k != "parallel"}
+        self._paths: list[str] = []
+        self._jobs: list[tuple[str, str]] = []
+        self._batch_active = False
+        self._done_count = 0
+        self._cancel_event: threading.Event | None = None
+        self._progress_mgr = None
+        self._progress_q = None
+        self._frame_last: dict[int, float] = {}   # worker 线程节流（0.1s）
+        self._rate: dict[int, deque] = {}         # 每文件滑动窗口速率采样
+        self._rate_last: dict[int, float] = {}    # 文本节流（0.3s，同 GUI 批量）
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="batch_body"):
+            yield Static("批量处理（使用当前表单的全部水印/编码参数）", classes="section")
+            with Horizontal():
+                yield Input(placeholder="视频文件或目录路径（目录递归扫描视频）",
+                            id="batch_input")
+                yield Button("添加", id="batch_add", variant="primary")
+            with Horizontal():
+                yield Button("移除选中", id="batch_remove")
+                yield Button("清空", id="batch_clear")
+            yield ListView(id="batch_list")
+            with Horizontal():
+                yield Static("输出格式", classes="fld")
+                yield Select(BATCH_FORMAT_CHOICES, value="mp4",
+                             id="batch_format", allow_blank=False)
+            with Horizontal():
+                yield Static("输出目录", classes="fld")
+                yield Input(placeholder="空 = 首个文件旁的 水印输出/",
+                            id="batch_outdir")
+            with Horizontal():
+                yield Static("并行数", classes="fld")
+                yield Input(value="0", id="batch_parallel")
+                yield Static("0=自动；>1 多视频同时处理", classes="fld")
+            with Horizontal(id="batch_actions"):
+                yield Button("开始批量处理 (F8)", id="batch_run",
+                             variant="success")
+                yield Button("取消", id="batch_cancel", variant="error",
+                             disabled=True)
+            yield ProgressBar(total=100.0, show_eta=False, id="batch_bar")
+            yield Static("就绪", id="batch_status")
+            yield ProgressBar(total=100.0, show_eta=False, id="batch_frame_bar")
+            yield Static("帧进度：—", id="batch_frame_status")
+            yield RichLog(id="batch_log", max_lines=2000, markup=False,
+                          highlight=False)
+        yield Footer()
+
+    # ------------------------------------------------------------------
+    # 文件列表
+    # ------------------------------------------------------------------
+    def _add_paths(self) -> None:
+        raw = self.query_one("#batch_input", Input).value.strip().strip('"')
+        if not raw:
+            self.notify("请先填写视频文件或目录路径", severity="warning")
+            return
+        p = Path(raw)
+        if p.is_dir():
+            found = scan_videos(raw)
+            if not found:
+                self.notify("该目录下未找到视频文件", severity="warning")
+                return
+        elif p.is_file() and p.suffix.lower() in VIDEO_EXTS:
+            found = [str(p)]
+        else:
+            self.notify(f"路径不存在或不是视频：{raw}", severity="error")
+            return
+        have = set(self._paths)
+        lv = self.query_one("#batch_list", ListView)
+        added = 0
+        for f in found:
+            if f not in have:
+                have.add(f)
+                self._paths.append(f)
+                lv.append(ListItem(Label(Path(f).name)))
+                added += 1
+        self.query_one("#batch_input", Input).value = ""
+        if added:
+            self._autofill_outdir()
+        self.notify(f"已添加 {added} 个视频（共 {len(self._paths)} 个）",
+                    severity="information")
+
+    def _remove_selected(self) -> None:
+        if self._batch_active:
+            return
+        lv = self.query_one("#batch_list", ListView)
+        idx = lv.index
+        if idx is None or not self._paths:
+            self.notify("请先在列表中选中要移除的文件", severity="warning")
+            return
+        lv.remove_items([idx])
+        self._paths.pop(idx)
+
+    def _autofill_outdir(self) -> None:
+        out_edit = self.query_one("#batch_outdir", Input)
+        if out_edit.value.strip() or not self._paths:
+            return
+        out_edit.value = str(Path(self._paths[0]).parent / "水印输出")
+
+    # ------------------------------------------------------------------
+    # 开始 / 取消
+    # ------------------------------------------------------------------
+    def _start_batch(self) -> None:
+        if self._batch_active:
+            self.notify("批量处理进行中", severity="warning")
+            return
+        if not self._paths:
+            self.notify("请先添加待处理的视频", severity="warning")
+            return
+        raw_par = self.query_one("#batch_parallel", Input).value.strip()
+        try:
+            batch_parallel = int(raw_par) if raw_par else 0
+        except ValueError:
+            self.notify(f"「并行数」需为整数，当前：{raw_par!r}", severity="error")
+            return
+        if not 0 <= batch_parallel <= 16:
+            self.notify("「并行数」需在 0~16", severity="error")
+            return
+        outdir = self.query_one("#batch_outdir", Input).value.strip()
+        if not outdir:
+            outdir = str(Path(self._paths[0]).parent / "水印输出")
+            self.query_one("#batch_outdir", Input).value = outdir
+        out_ext = str(self.query_one("#batch_format", Select).value)
+        Path(outdir).mkdir(parents=True, exist_ok=True)
+        jobs = plan_jobs(self._paths, outdir, out_ext)
+        if batch_parallel == 0:
+            batch_parallel = min(4, os.cpu_count() or 1)
+
+        self._jobs = jobs
+        self._batch_active = True
+        self._done_count = 0
+        self._rate.clear()
+        self._rate_last.clear()
+        self._frame_last.clear()
+        self._cancel_event = threading.Event()
+        for wid in ("batch_add", "batch_remove", "batch_clear", "batch_run"):
+            self.query_one(f"#{wid}", Button).disabled = True
+        self.query_one("#batch_cancel", Button).disabled = False
+        log = self.query_one("#batch_log", RichLog)
+        log.clear()
+        self.query_one("#batch_bar", ProgressBar).update(progress=0)
+        self.query_one("#batch_frame_bar", ProgressBar).update(progress=0)
+        self.query_one("#batch_status", Static).update(
+            f"开始处理 {len(jobs)} 个文件…（并行 {batch_parallel}）")
+        self.query_one("#batch_frame_status", Static).update("帧进度：—")
+        # 跨进程帧进度队列：必须在主线程创建（Windows 非主线程建 Queue 会
+        # WinError 5，GUI 批量同款约束）；失败退回并行无帧进度，不阻断批量。
+        self._progress_q = None
+        self._progress_mgr = None
+        if batch_parallel >= 2 and len(jobs) > 1:
+            try:
+                self._progress_mgr = multiprocessing.Manager()
+                self._progress_q = self._progress_mgr.Queue()
+            except Exception:  # noqa: BLE001
+                self._shutdown_mgr()
+                self._progress_q = None
+        self._batch_worker(jobs, batch_parallel)
+
+    def _cancel_batch(self) -> None:
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+            self.notify("正在取消…（并行模式下在途文件会处理完）",
+                        severity="warning")
+
+    def action_cancel_or_close(self) -> None:
+        if self._batch_active:
+            self._cancel_batch()
+        else:
+            self.app.pop_screen()
+
+    def action_start_batch(self) -> None:
+        self._start_batch()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "batch_add":
+            self._add_paths()
+        elif bid == "batch_remove":
+            self._remove_selected()
+        elif bid == "batch_clear":
+            if not self._batch_active:
+                self._paths.clear()
+                self.query_one("#batch_list", ListView).clear()
+        elif bid == "batch_run":
+            self._start_batch()
+        elif bid == "batch_cancel":
+            self._cancel_batch()
+
+    # ------------------------------------------------------------------
+    # 批量 worker（@work 线程）与 UI 回调（主线程）
+    # ------------------------------------------------------------------
+    @work(thread=True, exclusive=True, group="batch")
+    def _batch_worker(self, jobs: list[tuple[str, str]],
+                      batch_parallel: int) -> None:
+        # 注意：本方法挂在 BatchScreen 上（不同于挂在 App 上的 _export_worker），
+        # 调度回 UI 线程必须用 self.app.call_from_thread —— Screen 没有
+        # call_from_thread，误用 self.call_from_thread 会 AttributeError 且被
+        # 下方 except 吞掉（表现为批量正常完成但 UI 零更新、无法收尾）。
+        def _frame_cb(idx: int, done: int, ftotal: int) -> None:
+            try:
+                now = _time.monotonic()
+                if done < ftotal and now - self._frame_last.get(idx, 0.0) < 0.1:
+                    return  # 节流：每 0.1s 最多刷一次 UI（同单文件导出）
+                self._frame_last[idx] = now
+                self.app.call_from_thread(self._on_frame_progress, idx, done, ftotal)
+            except Exception:  # noqa: BLE001 —— UI 关闭竞态不中断批量
+                pass
+
+        def _file_cb(idx: int, msg: str, ok_flag) -> None:
+            try:
+                self.app.call_from_thread(self._on_file_done, idx, msg, ok_flag)
+            except Exception:  # noqa: BLE001
+                pass
+
+        res = run_batch(jobs, self._cfg, self._params, batch_parallel,
+                        progress_q=self._progress_q, frame_cb=_frame_cb,
+                        file_cb=_file_cb, cancel_event=self._cancel_event)
+        try:
+            self.app.call_from_thread(self._on_all_done, res)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _batch_ui(self):
+        """批量屏 UI 访问（非批量屏 / app 关闭竞态返回 None）。"""
+        try:
+            if not isinstance(self.screen, BatchScreen):
+                return None
+        except ScreenStackError:
+            return None
+        return self.screen
+
+    def _on_frame_progress(self, idx: int, done: int, ftotal: int) -> None:
+        s = self._batch_ui()
+        if s is None:
+            return
+        name = (Path(self._jobs[idx][0]).name
+                if idx < len(self._jobs) else f"文件{idx + 1}")
+        now = _time.monotonic()
+        if ftotal and ftotal > 0:
+            pct = done * 100 // ftotal
+            s.query_one("#batch_frame_bar", ProgressBar).update(
+                progress=done / ftotal * 100)
+            samples = self._rate.setdefault(idx, deque())
+            samples.append((done, now))
+            while len(samples) > 2 and now - samples[0][1] > 2.0:
+                samples.popleft()
+            rate = 0.0
+            if len(samples) >= 2:
+                (d0, t0), (d1, t1) = samples[0], samples[-1]
+                if d1 > d0 and t1 > t0:
+                    rate = (d1 - d0) / (t1 - t0)
+            if now - self._rate_last.get(idx, 0.0) >= 0.3 or done >= ftotal:
+                eta_txt = ""
+                if rate > 0:
+                    eta = int(max(0, (ftotal - done) / rate))
+                    eta_txt = f"  ≈{rate:.1f} 帧/秒  剩余约 {eta // 60}:{eta % 60:02d}"
+                s.query_one("#batch_frame_status", Static).update(
+                    f"文件 {idx + 1}/{len(self._jobs)}：{name}  "
+                    f"第 {done}/{ftotal} 帧 ({pct}%){eta_txt}")
+                self._rate_last[idx] = now
+        else:
+            s.query_one("#batch_frame_bar", ProgressBar).update(progress=0)
+            s.query_one("#batch_frame_status", Static).update(
+                f"文件 {idx + 1}/{len(self._jobs)}：{name}  处理中…")
+
+    def _on_file_done(self, idx: int, msg: str, ok_flag) -> None:
+        s = self._batch_ui()
+        if s is None:
+            return
+        self._done_count += 1
+        s.query_one("#batch_log", RichLog).write(msg)
+        total = max(1, len(self._jobs))
+        s.query_one("#batch_bar", ProgressBar).update(
+            progress=self._done_count * 100 / total)
+        s.query_one("#batch_status", Static).update(
+            f"已完成 {self._done_count}/{total} 个文件")
+
+    def _on_all_done(self, res: dict) -> None:
+        s = self._batch_ui()
+        self._batch_active = False
+        self._shutdown_mgr()
+        if s is None:
+            self.notify(f"批量结束：成功 {res['ok']}，失败 {res['fail']}",
+                        severity="information")
+            return
+        extra = "（已取消）" if res.get("cancelled") else ""
+        s.query_one("#batch_status", Static).update(
+            f"批量处理结束：成功 {res['ok']}，失败 {res['fail']}{extra}")
+        s.query_one("#batch_frame_status", Static).update("帧进度：已完成")
+        for wid in ("batch_add", "batch_remove", "batch_clear", "batch_run"):
+            s.query_one(f"#{wid}", Button).disabled = False
+        s.query_one("#batch_cancel", Button).disabled = True
+
+    def _shutdown_mgr(self) -> None:
+        mgr = self._progress_mgr
+        if mgr is not None:
+            try:
+                mgr.shutdown()
+            except Exception:  # noqa: BLE001
+                pass
+            self._progress_mgr = None
+
+
 class WatermarkTuiApp(App[None]):
     """视频水印 TUI 主应用。"""
 
@@ -155,12 +483,24 @@ class WatermarkTuiApp(App[None]):
     ExportScreen #export_body { height: auto; padding: 1 2; }
     ExportScreen ProgressBar { margin-bottom: 1; }
     #export_meta { color: $text-muted; margin-bottom: 1; }
+    /* 批量屏（v0.5.6）：滚动视口 1fr；行容器 height auto（塌缩陷阱同 #form），
+       行内 Input 默认 100% 会把同行按钮挤出 → 1fr（陷阱同 #form） */
+    BatchScreen #batch_body { height: 1fr; padding: 0 1; }
+    #batch_body Horizontal { height: auto; }
+    #batch_body Horizontal Input, #batch_body Horizontal Select { width: 1fr; }
+    #batch_list { height: auto; max-height: 14; border: round $primary;
+                  margin-bottom: 1; }
+    #batch_actions { height: auto; padding: 1 0; }
+    #batch_bar, #batch_frame_bar { margin-bottom: 1; }
+    #batch_status, #batch_frame_status { color: $text-muted; margin-bottom: 1; }
+    #batch_log { height: 8; border: round $primary; padding: 0 1; }
     """
 
     BINDINGS = [("ctrl+q", "quit", "退出"), ("ctrl+s", "save_config", "保存配置"),
                 ("f5", "preview_frame", "预览帧"),
                 ("f6", "preview_sketch", "轨迹示意"),
-                ("f7", "export_run", "开始导出")]
+                ("f7", "export_run", "开始导出"),
+                ("f8", "open_batch", "批量处理")]
 
     def __init__(self, config_path: str | None = None) -> None:
         super().__init__()
@@ -262,6 +602,7 @@ class WatermarkTuiApp(App[None]):
         with Horizontal(id="actions"):
             yield Button("预览 JSON", id="preview_json")
             yield Button("开始导出 (F7)", id="export_run", variant="success")
+            yield Button("批量处理 (F8)", id="batch_open")
         yield Static("（尚未生成）", id="json_out")
         yield Footer()
 
@@ -454,6 +795,8 @@ class WatermarkTuiApp(App[None]):
             self._open_preview(with_sketch=False)
         elif event.button.id == "export_run":
             self._start_export()
+        elif event.button.id == "batch_open":
+            self._open_batch()
         elif event.button.id == "hw_detect":
             self._detect_hw()
 
@@ -635,6 +978,22 @@ class WatermarkTuiApp(App[None]):
 
     def action_export_run(self) -> None:
         self._start_export()
+
+    def action_open_batch(self) -> None:
+        self._open_batch()
+
+    # ------------------------------------------------------------------
+    # 批量处理（v0.5.6：F8 → BatchScreen，逻辑在 app/core/batch.py）
+    # ------------------------------------------------------------------
+    def _open_batch(self) -> None:
+        """以当前表单的全部水印/编码参数为快照打开批量屏。"""
+        try:
+            cfg = self.collect_config()
+            params = self.collect_export_params()
+        except ConfigError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        self.push_screen(BatchScreen(cfg, params))
 
 
 def main(argv: list[str] | None = None) -> int:

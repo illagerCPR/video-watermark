@@ -1,6 +1,6 @@
 # 视频水印工具
 
-一款桌面图形界面的视频水印软件：支持**全屏平铺水印**（文字/图片，可旋转角度）与**移动水印**（7 种预设轨迹），并提供预览、批量处理与输出编码控制。
+一款跨平台视频水印软件，提供**图形界面（GUI）**、**终端界面（TUI，v0.5.0 起）**与**命令行**三种入口：支持**全屏平铺水印**（文字/图片，可旋转角度）与**移动水印**（7 种预设轨迹），并提供预览、批量处理与输出编码控制。
 
 ## 🖥 启动方式
 
@@ -77,7 +77,7 @@ tar -xzf VideoWatermark-linux-x86_64.tar.gz
 ### 3. 增强功能
 - **出现时间范围**：只在指定时间段显示水印
 - **实时预览**：预览任意时刻的水印效果 + 移动轨迹示意图
-- **批量处理**：多视频一次生成，逐文件进度
+- **批量处理**：多视频一次生成，逐文件进度（GUI 对话框与 TUI 批量屏共用同一后端 `app/core/batch.py`，v0.5.6 起）
 - **详细帧级进度（v0.2.0 起）**：单文件导出与批量处理均显示逐帧进度（第 X/Y 帧 + 百分比 + 处理速度 + 预计剩余时间）
 - **平滑帧速率（v0.2.2 起）**：单文件导出与批量处理均以滑动窗口平滑显示处理速率与预计剩余时间，不再闪烁跳变
 - **界面增强（v0.2.2 起）**：左侧参数面板加宽（不再出现横向滚动条）；窗口标题栏与任务栏显示软件图标（打包 exe 同样生效）
@@ -89,7 +89,7 @@ tar -xzf VideoWatermark-linux-x86_64.tar.gz
 - **硬件编码**：自动探测并使用 NVIDIA NVENC / Intel QSV / AMD AMF / MediaFoundation / D3D12VA，无可用 GPU 时自动回退 CPU 编码（libx264）
 - **双编码格式**：H.264 / HEVC（H.265）
 - **硬件解码**：启用 `-hwaccel auto` 加速解码，驱动不兼容时自动回退软件解码
-- **一键检测**：GUI 内可实时探测当前机器的可用硬件编码器
+- **一键检测**：GUI / TUI 内均可实时探测——硬件编码器逐个实测，v0.5.3 起同时报告硬件解码器
 - 编码器/解码能力**零新增依赖**（复用内置静态 ffmpeg），打包体积不变
 - **Linux GPU 支持（v0.3.2 起）**：Linux 版内置 ffmpeg 不含硬件编码器，程序会**自动检测系统 ffmpeg**（如 `apt install ffmpeg`），若其具备硬件编码器则自动切换使用（NVIDIA/Intel 显卡开箱即得 GPU 加速）；也可用 `--ffmpeg` 手动指定任意二进制（如 BtbN 构建）。无系统 ffmpeg 或无 GPU 时仍回退 CPU，零依赖不受影响
 
@@ -107,15 +107,16 @@ tar -xzf VideoWatermark-linux-x86_64.tar.gz
 - **GUI 二进制来源设置（v0.4.0 起）**：输出设置区可选 ffmpeg 二进制来源（自动（推荐）/ 内置二进制 / 自定义路径），QSettings 持久化，切换后下次生成/检测生效；「检测」结果同时显示当前实际使用的二进制与来源、硬件**编码器**（逐个实测）与硬件**解码器**列表（v0.5.3 起，含 VAAPI/CUDA 等硬件加速方法）
 
 ### 7. ⌨️ TUI 交互模式（v0.5.0 起）
-- **终端全屏界面**：像 GUI 一样交互式配置全部水印参数（22 个字段 + 编码参数），无需记忆命令行
+- **终端全屏界面**：像 GUI 一样交互式配置全部水印参数与编码参数（CRF/预设/缩放/硬件编码/并行数），无需记忆命令行
 - **半块像素预览**：任意时间点的水印合成帧 + 移动轨迹示意，直接渲染在终端内（F5/F6）
 - **交互式导出**：帧进度 + 平滑速率 + ETA + 一键取消（F7），后台线程渲染不卡界面
+- **批量处理（v0.5.6 起，F8）**：多视频共用当前表单参数批量生成——文件/目录（递归扫描）入队、输出目录/格式/批量并行数可调；文件级 + 帧级进度（速率/ETA）+ 逐文件结果日志；运行中 Esc 取消（并行模式在途文件处理完后停止）
 - **配置文件**：`--config` 预载 / 界面内加载保存（与 GUI/CLI 完全互通的 JSON）
 - **TUI 启动器（v0.5.2）**：打包版推荐运行 **`VideoWatermarkTUI.exe`**（与主程序同目录）——它是控制台程序，cmd/PowerShell 会等待其退出，TUI 独占键盘；直接运行 `VideoWatermark.exe --tui` 时 shell 不等待 GUI 程序、会与 TUI 抢键（界面进得去但按键可能无响应，启动时会打印提示）
 - **字段标签 + 硬件检测（v0.5.4）**：全部参数行内显示用途标签；「检测硬件」按钮输出与 GUI 相同的编码器（实测）/解码器报告及当前 ffmpeg 二进制；导出进度旁显示本次实际使用的编码器与解码方式
 - **单 exe 双模式**：Windows exe 支持 `--tui` 参数（自动附加当前终端控制台，Windows Terminal / PowerShell / cmd 均可，v0.5.1 修复附加逻辑）；双击启动（无控制台）弹提示后退出（退出码 2），仍为 GUI 入口
 - **入口**：`python -m app.tui`、`python -m app.cli --tui`、Linux `./启动.sh --tui`、Windows `启动-tui.bat`
-- **按键**：`F5` 预览帧+轨迹 · `F6` 轨迹示意 · `F7` 开始导出 · `Ctrl+S` 保存配置 · `Esc` 返回/取消 · `Ctrl+Q` 退出
+- **按键**：`F5` 预览帧+轨迹 · `F6` 轨迹示意 · `F7` 开始导出 · `F8` 批量处理 · `Ctrl+S` 保存配置 · `Esc` 返回/取消 · `Ctrl+Q` 退出
 - **排查**：exe `--tui` 启动异常时，设环境变量 `VIDEO_WATERMARK_TUI_DEBUG=1` 再运行，判定过程会追加到 `%TEMP%\video_watermark_tui_debug.log`
 
 ## 🚀 快速开始
@@ -131,17 +132,13 @@ tar -xzf VideoWatermark-linux-x86_64.tar.gz
 
 首次运行会自动创建虚拟环境并安装依赖（官方源失败自动换国内镜像），之后每次启动直接打开图形界面。
 
-> 要求：本机已安装 **Python 3.10 或更高版本**。
-> Linux GUI 需要系统图形库（多数桌面发行版自带）；若报 "could not load the Qt platform plugin xcb"，按启动脚本的提示安装 `libxcb-cursor0` 等库即可。
-> Windows 若启动失败，查看项目根目录 `gui_error.log` 定位原因。
-
 ### 方式一 · B：TUI 终端模式（v0.5.0 起）
 
 - **Windows**：双击 **`启动-tui.bat`**（或在终端运行 `.venv\Scripts\python.exe -m app.tui`；打包版推荐 **`VideoWatermarkTUI.exe`**，与 `VideoWatermark.exe` 同目录——直接运行主程序 `--tui` 会与终端抢键，见下）
 - **Linux / macOS**：`./启动.sh --tui`
-- 按键：`F5` 预览帧+轨迹 · `F6` 轨迹示意 · `F7` 开始导出 · `Ctrl+S` 保存配置 · `Esc` 返回/取消 · `Ctrl+Q` 退出
+- 按键：`F5` 预览帧+轨迹 · `F6` 轨迹示意 · `F7` 开始导出 · `F8` 批量处理 · `Ctrl+S` 保存配置 · `Esc` 返回/取消 · `Ctrl+Q` 退出
 
-### 方式二：命令行
+### 方式二：命令行启动图形界面
 ```bat
 .venv\Scripts\python.exe -m app.main
 ```
@@ -180,7 +177,6 @@ rem GPU 硬件加速（默认 auto 自动选可用硬件编码器，无 GPU 回�
 可用参数与默认值见 `app/models.py` 中的 `WatermarkConfig`；`--print-config` 可打印完整配置 JSON。
 GPU 相关：`--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf`、`--hw-codec h264|hevc`、`--no-hw-decode`、`--parallel N`。
 ffmpeg 二进制：`--ffmpeg PATH|internal`（Linux 上内置版无硬件编码器时默认自动探测系统 ffmpeg；`PATH` 显式指定任意二进制，`internal` 强制用内置版；也可设环境变量 `VIDEO_WATERMARK_FFMPEG`，GUI 用户可用后者）。
-GPU 相关：`--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf`、`--hw-codec h264|hevc`、`--no-hw-decode`、`--parallel N`。
 
 ## 🖱 界面使用说明
 
@@ -192,7 +188,7 @@ GPU 相关：`--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf`、`--hw-codec h26
 | 文字设置 | 多行内容、字体、字号、颜色、透明度、描边 |
 | 图片设置 | 图片路径、缩放、透明度、圆角 |
 | 平铺参数 | 角度、行/列间距、偏移 |
-| 移动参数 | 6 种轨迹、速度、大小、透明度、自转 |
+| 移动参数 | 7 种轨迹、速度、大小、透明度、自转 |
 | 时间范围 | 水印出现/消失时间 |
 | 输出设置 | 格式、质量 CRF、编码预设、分辨率缩放、**硬件编码/视频编码/硬件解码**（含「检测」按钮）、**ffmpeg 二进制来源**（自动/内置/自定义路径） |
 | 预览 | 「预览帧」看效果、「轨迹示意」看移动路径 |
@@ -204,23 +200,29 @@ GPU 相关：`--hw-encoder auto|none|nvenc|qsv|amf|d3d12va|mf`、`--hw-codec h26
 ```
 app/
 ├─ main.py               # 程序入口（GUI）
-├─ cli.py                # 命令行入口
+├─ cli.py                # 命令行入口（--tui 亦可拉起 TUI）
+├─ tui.py                # TUI 终端界面（Textual，v0.5.0 起）
+├─ tui_preview.py        # TUI 半块像素预览渲染
+├─ tui_shim.py           # Windows 打包版 TUI 控制台垫片（v0.5.2）
 ├─ models.py             # 水印配置数据类（参数定义）
 ├─ ui/
 │  ├─ main_window.py     # 主窗口
 │  └─ batch_dialog.py    # 批量处理对话框
 └─ core/
    ├─ watermark.py       # 文字/图片渲染、平铺瓦片
-   ├─ motion.py          # 6 种轨迹计算
+   ├─ motion.py          # 7 种轨迹计算
    ├─ compositor.py      # 逐帧合成（含时间范围、自转）
    ├─ hwaccel.py         # GPU 硬件编码器探测、参数映射、硬件解码
    ├─ ffbin.py           # ffmpeg 二进制解析层（内置/系统/显式指定，v0.3.2 起）
+   ├─ subproc.py         # 子进程隐藏窗口封装（v0.2.1 起）
+   ├─ batch.py           # 批量处理核心（GUI/TUI 共用，v0.5.6 起）
    ├─ encoder.py         # ffmpeg 读写与编码（含并行帧流水线）
    └─ preview.py         # 预览帧渲染、轨迹示意图
 scripts/                 # 演示与测试脚本
 outputs/                 # 生成的样例视频（可作验收）
-启动.bat                 # Windows 双击启动器
-启动.sh                  # Linux/macOS 启动器
+启动.bat                 # Windows 双击启动器（GUI）
+启动-tui.bat             # Windows TUI 启动器（v0.5.0 起）
+启动.sh                  # Linux/macOS 启动器（--tui 进入 TUI）
 .github/workflows/       # CI：双平台自动构建与发布
 requirements.txt         # 依赖清单
 ```
@@ -240,20 +242,21 @@ rem Windows
 .venv/bin/pyinstaller "video_watermark.spec" --noconfirm
 ```
 
-- 产物：Windows `dist\VideoWatermark.exe` / Linux `dist/VideoWatermark`（单文件，约 86~108MB，已内置 ffmpeg 离线可用）
+- 产物：Windows `dist\VideoWatermark.exe`（约 93MB）+ `dist\VideoWatermarkTUI.exe` 控制台垫片（约 8MB，v0.5.2 起）/ Linux `dist/VideoWatermark`（约 108MB）——均单文件、已内置 ffmpeg 离线可用
 - 自检：运行产物加 `--selftest`，退出码 0 表示打包正常；自检包含**打包环境下进程池可用性验证**（批量并行的子进程不会重新弹窗、能正常执行）
 - 首次启动解压较慢属正常现象（单文件模式）
 - **批量并行 ≥2 在打包 exe 下正常**：入口已加 `multiprocessing.freeze_support()`（v0.2.0 修复，此前子进程会重复弹出主窗口）
 - **处理过程不再闪命令窗（v0.2.1）**：所有 ffmpeg / explorer 子进程统一走隐藏窗口封装（`CREATE_NO_WINDOW`）
 - **CI 自动构建（v0.3.0 起）**：推送 `v*` 标签或手动触发后，GitHub Actions 自动构建 Windows 与 Linux 双平台产物并发布 Release（见 `.github/workflows/build.yml`）
 
-## 🧪 测试与验证（11 套）
+## 🧪 测试与验证（12 套）
 
 ```bat
 rem Windows（PowerShell）
 .venv\Scripts\python.exe scripts\smoke_test.py          rem 轨迹/渲染逻辑
 .venv\Scripts\python.exe scripts\verify_ffbin.py        rem ffmpeg 二进制解析层专项
 .venv\Scripts\python.exe scripts\tui_test.py            rem TUI 全流程（Pilot 无终端自动化；含布局回归）
+.venv\Scripts\python.exe scripts\tui_batch_test.py      rem TUI 批量处理专项（core 层 + Pilot 端到端，v0.5.6 起）
 .venv\Scripts\python.exe scripts\verify_step1.py        rem 像素级成品验证
 .venv\Scripts\python.exe scripts\verify_hw.py           rem GPU 硬件加速专项
 .venv\Scripts\python.exe scripts\verify_pipeline.py     rem 并行流水线专项
@@ -270,6 +273,7 @@ rem Windows（PowerShell）
 .venv/bin/python scripts/smoke_test.py
 .venv/bin/python scripts/verify_ffbin.py
 .venv/bin/python scripts/tui_test.py
+.venv/bin/python scripts/tui_batch_test.py
 .venv/bin/python scripts/verify_step1.py
 .venv/bin/python scripts/verify_hw.py
 .venv/bin/python scripts/verify_pipeline.py
@@ -286,7 +290,7 @@ rem Windows（PowerShell）
 
 ## ❓ 常见问题
 
-- **首次处理较慢 / 报 ffmpeg 相关错误**：程序首次使用会自动下载内置 ffmpeg 静态二进制（约 30MB，需联网一次），之后缓存于用户目录。
+- **首次处理较慢 / 报 ffmpeg 相关错误**：内置 ffmpeg 静态二进制随依赖（imageio-ffmpeg）一同安装，**无需联网下载**；首次导出若选硬件编码 `auto`，程序会对候选编码器做极短样片实测（数秒，结果缓存后不再重测）。仍报 ffmpeg 错误时设 `VIDEO_WATERMARK_FFBIN_DEBUG=1` 再运行，二进制解析过程会写入日志（Linux `$TMPDIR`、Windows `%TEMP%` 下的 `video_watermark_ffbin_debug.log`）。
 - **生成视频时会一闪而过黑色命令窗**：v0.2.1 起已修复——所有 ffmpeg/explorer 子进程统一以隐藏窗口方式启动，处理全程不再弹命令窗。
 - **中文字体不显示**：确保系统装有中文字体（Windows 自带微软雅黑/黑体/宋体等），软件会自动选择。
 - **输出尺寸与原视频不同**：为保证编码兼容性，奇数尺寸会取整到偶数；一般视频不受影响。
