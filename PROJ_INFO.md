@@ -1,7 +1,7 @@
 # VideoWatermark 项目信息（PROJ_INFO）
 
 > 本文件为项目结构与能力快照，随版本维护；最新变更见 `CHANGELOG.md`。
-> 当前版本：**v0.5.6**（代码；最新发布 v0.5.5）· 仓库：<https://github.com/illagerCPR/video-watermark> · 许可：Unlicense
+> 当前版本：**v0.5.6** · 仓库：<https://github.com/illagerCPR/video-watermark> · 许可：Unlicense
 
 ## 一、项目定位
 
@@ -108,7 +108,7 @@
 - `smoke_test`（7 种轨迹含 ∞ 横向取向专检 / 渲染）、`verify_ffbin`（二进制解析层）、`tui_test`（Pilot 无终端自动化，11 节：表单往返/校验/配置/预览屏/导出取消/布局回归/检测按钮/导出编码器显示）、`tui_batch_test`（TUI 批量专项，v0.5.6：core 层 scan_videos/plan_jobs/run_batch 取消语义 + Pilot 端到端串行/并行/取消/布局回归）、`verify_step1`（**像素级**成品验证：水印差异 + 轨迹质心对照）、`gui_smoke`（含检测布局回归）、`gui_export_test`/`step3_export_test`/`step4_batch_test`（端到端导出/编码参数/批量）、`verify_time_range`、`verify_audio`（音频保留）、`verify_hw`（GPU 专项，环境感知 SKIP）、`verify_pipeline`（串并字节级一致）
 - CI：双平台构建后各跑 `--selftest`（离屏建窗 + 真实编码 + 进程池可用性），tag 触发自动发布
 
-## 七、发布产物（v0.5.5）
+## 七、发布产物（v0.5.6）
 
 | 产物 | 大小 | 说明 |
 |---|---|---|
@@ -117,7 +117,7 @@
 | `VideoWatermark-linux-x86_64.tar.gz` | ~122MB | ELF 单文件 |
 | `VideoWatermark-linux-x86_64.AppImage` | ~123MB | 免安装，无 FUSE 自动解包 |
 
-**版本历史**（16 个发布）：v0.1.0~0.1.2（核心引擎与像素验证）→ v0.2.x（GUI、批量、进程池修复）→ v0.3.0（Linux 跨平台 + CI 双平台）→ v0.3.2（ffbin 解析层，Linux GPU 编码）→ v0.4.0（ffmpeg 来源设置、AppImage）→ v0.5.0（TUI 模式）→ v0.5.1（GUI/TUI 布局修复、Windows Terminal 支持）→ v0.5.2（TUI 键盘独占垫片）→ v0.5.3（解码器检测）→ v0.5.4（AppImage 库污染修复、TUI 字段标签/检测按钮/编码器显示）→ v0.5.5（∞ 形轨迹预设）→ v0.5.6（TUI 批量处理 F8、批量核心抽离 core/batch.py、README 全面核对，待发版）。
+**版本历史**（17 个发布）：v0.1.0~0.1.2（核心引擎与像素验证）→ v0.2.x（GUI、批量、进程池修复）→ v0.3.0（Linux 跨平台 + CI 双平台）→ v0.3.2（ffbin 解析层，Linux GPU 编码）→ v0.4.0（ffmpeg 来源设置、AppImage）→ v0.5.0（TUI 模式）→ v0.5.1（GUI/TUI 布局修复、Windows Terminal 支持）→ v0.5.2（TUI 键盘独占垫片）→ v0.5.3（解码器检测）→ v0.5.4（AppImage 库污染修复、TUI 字段标签/检测按钮/编码器显示）→ v0.5.5（∞ 形轨迹预设）→ v0.5.6（TUI 批量处理 F8、批量核心抽离 core/batch.py、README 全面核对）。
 
 ## 八、已知限制
 
