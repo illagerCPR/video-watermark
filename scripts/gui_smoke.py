@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.models import (  # noqa: E402
@@ -32,6 +33,9 @@ def check(name, cond, detail=""):
 
 
 app = QApplication(sys.argv)
+# 隔离机器状态：清掉历史残留的 ffmpeg 来源设置（此前异常退出的 GUI/测试
+# 可能留下 mode=custom 等），否则「默认模式为自动」等断言依赖运气
+QSettings("VideoWatermark", "VideoWatermark").remove("ffmpeg")
 win = MainWindow()
 win.show()
 

@@ -54,6 +54,9 @@ def _run_one(inp, out, cfg, crf, preset, scale, hw_encoder, hw_codec, hw_decode,
 
     progress_q 不为 None 时，把逐帧进度 (文件序号, done, total) 放进队列，
     由父进程的转发线程读出并回调 frame_cb。
+
+    返回 process() 的 stats dict（含 codec），父进程据此在完成消息里
+    显示实际编码器（v0.5.7 起）。
     """
     def _cb(done, ftotal):
         try:
@@ -62,9 +65,9 @@ def _run_one(inp, out, cfg, crf, preset, scale, hw_encoder, hw_codec, hw_decode,
         except Exception:  # noqa: BLE001 —— 进度上报失败不影响处理本身
             pass
 
-    process(inp, out, cfg, crf=crf, preset=preset, scale=scale,
-            hw_encoder=hw_encoder, hw_codec=hw_codec, hw_decode=hw_decode,
-            progress_cb=_cb)
+    return process(inp, out, cfg, crf=crf, preset=preset, scale=scale,
+                   hw_encoder=hw_encoder, hw_codec=hw_codec, hw_decode=hw_decode,
+                   progress_cb=_cb)
 
 
 def run_batch(jobs: list[tuple[str, str]], cfg: WatermarkConfig,
@@ -104,13 +107,14 @@ def run_batch(jobs: list[tuple[str, str]], cfg: WatermarkConfig,
                     frame_cb(i, done, ftotal)
 
             try:
-                process(inp, out, cfg, crf=crf, preset=preset, scale=scale,
-                        hw_encoder=hw_encoder, hw_codec=hw_codec,
-                        hw_decode=hw_decode, progress_cb=cb,
-                        cancel_event=cancel_event)
+                stats = process(inp, out, cfg, crf=crf, preset=preset, scale=scale,
+                                hw_encoder=hw_encoder, hw_codec=hw_codec,
+                                hw_decode=hw_decode, progress_cb=cb,
+                                cancel_event=cancel_event)
                 ok += 1
                 if file_cb is not None:
-                    file_cb(idx, f"完成：{os.path.basename(out)}", True)
+                    file_cb(idx, f"完成：{os.path.basename(out)}"
+                                 f"（{stats.get('codec', '?')}）", True)
             except ProcessCancelled:
                 cancelled = True
                 break
@@ -156,10 +160,11 @@ def run_batch(jobs: list[tuple[str, str]], cfg: WatermarkConfig,
                 for f in done_set:
                     idx = in_flight.pop(f)
                     try:
-                        f.result()
+                        stats = f.result()
                         ok += 1
                         if file_cb is not None:
-                            file_cb(idx, f"完成：{os.path.basename(jobs[idx][1])}", True)
+                            file_cb(idx, f"完成：{os.path.basename(jobs[idx][1])}"
+                                         f"（{stats.get('codec', '?')}）", True)
                     except ProcessCancelled:  # 防御：子进程不接收 cancel_event，不应到达
                         cancelled = True
                     except Exception as exc:  # noqa: BLE001

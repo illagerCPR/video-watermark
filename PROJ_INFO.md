@@ -1,7 +1,7 @@
 # VideoWatermark 项目信息（PROJ_INFO）
 
 > 本文件为项目结构与能力快照，随版本维护；最新变更见 `CHANGELOG.md`。
-> 当前版本：**v0.5.6** · 仓库：<https://github.com/illagerCPR/video-watermark> · 许可：Unlicense
+> 当前版本：**v0.5.7**（代码；最新发布 v0.5.6）· 仓库：<https://github.com/illagerCPR/video-watermark> · 许可：Unlicense
 
 ## 一、项目定位
 
@@ -117,7 +117,7 @@
 | `VideoWatermark-linux-x86_64.tar.gz` | ~122MB | ELF 单文件 |
 | `VideoWatermark-linux-x86_64.AppImage` | ~123MB | 免安装，无 FUSE 自动解包 |
 
-**版本历史**（17 个发布）：v0.1.0~0.1.2（核心引擎与像素验证）→ v0.2.x（GUI、批量、进程池修复）→ v0.3.0（Linux 跨平台 + CI 双平台）→ v0.3.2（ffbin 解析层，Linux GPU 编码）→ v0.4.0（ffmpeg 来源设置、AppImage）→ v0.5.0（TUI 模式）→ v0.5.1（GUI/TUI 布局修复、Windows Terminal 支持）→ v0.5.2（TUI 键盘独占垫片）→ v0.5.3（解码器检测）→ v0.5.4（AppImage 库污染修复、TUI 字段标签/检测按钮/编码器显示）→ v0.5.5（∞ 形轨迹预设）→ v0.5.6（TUI 批量处理 F8、批量核心抽离 core/batch.py、README 全面核对）。
+**版本历史**（17 个发布）：v0.1.0~0.1.2（核心引擎与像素验证）→ v0.2.x（GUI、批量、进程池修复）→ v0.3.0（Linux 跨平台 + CI 双平台）→ v0.3.2（ffbin 解析层，Linux GPU 编码）→ v0.4.0（ffmpeg 来源设置、AppImage）→ v0.5.0（TUI 模式）→ v0.5.1（GUI/TUI 布局修复、Windows Terminal 支持）→ v0.5.2（TUI 键盘独占垫片）→ v0.5.3（解码器检测）→ v0.5.4（AppImage 库污染修复、TUI 字段标签/检测按钮/编码器显示）→ v0.5.5（∞ 形轨迹预设）→ v0.5.6（TUI 批量处理 F8、批量核心抽离 core/batch.py、README 全面核对）→ v0.5.7（批量完成消息带实际编码器、探测缓存原子写/空结果不落盘、报错附当前二进制来源，待发版）。
 
 ## 八、已知限制
 

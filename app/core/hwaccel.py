@@ -168,16 +168,38 @@ def _load_cache(key) -> Optional[dict[str, tuple[str, ...]]]:
 
 
 def _save_cache(key, available: dict) -> None:
-    """把探测结果写入磁盘缓存（尽力而为，失败静默忽略）。"""
+    """把探测结果写入磁盘缓存（尽力而为，失败静默忽略）。
+
+    - **原子写**（tmp + os.replace）：批量并行的多个子进程会各自完整探测并
+      并发写同一文件，直接覆盖写会被并发读者读到半截 JSON（虽可自愈但
+      白白多跑一轮探测），也可能交错损坏。
+    - **空结果不落盘**：探测存在瞬时失败（如 NVENC 会话偶发建不起来），
+      若把空的 available 持久化，会在此后**所有会话**持续表现为"未检测到
+      硬件编码器"（缓存键含二进制指纹，不升级就一直命中）。空结果只留在
+      本进程的 lru_cache 里，下次会话自动重测；真无硬件的机器每次会话多
+      花一次探测（数秒），换取瞬时故障不固化的确定性。
+    """
+    if not available:
+        return
+    tmp = None
     try:
         path = _cache_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"key": list(key),
                        "encoders": {k: list(v) for k, v in available.items()}},
                       f, ensure_ascii=False)
+        os.replace(tmp, path)
+        tmp = None
     except OSError:
         pass
+    finally:
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def describe_available() -> str:
@@ -370,9 +392,13 @@ def resolve_encode(hw_encoder: str, vcodec: str, crf: int, preset: str,
     if enc is None:
         raise ValueError(f"未知硬件编码器：{hw_encoder}")
     if hw_encoder not in available or vcodec not in available[hw_encoder]:
+        # 附上当前二进制及来源：来源=内置（Linux 版无硬件编码器）或自定义
+        # 路径指错文件时，用户一眼能看出是"来源挡死"而非机器没 GPU
+        info = ffbin.info()
         raise RuntimeError(
             f"{enc.name} 硬件编码器不可用（{vcodec}）。当前可用："
-            f"{describe_available()}。请改用 auto 或关闭硬件编码。")
+            f"{describe_available()}。请改用 auto 或关闭硬件编码。"
+            f"\n当前 ffmpeg：{info['exe']}（{info['source']}）")
     return enc.codec_name(vcodec), build_hw_output_params(
         hw_encoder, vcodec, crf, preset, w, h, fps)
 
